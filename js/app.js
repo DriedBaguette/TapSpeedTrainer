@@ -643,14 +643,6 @@
 
   // ------------------------------------------------------------ metronome
 
-  function audioToPerfOffset(ctx) {
-    if (ctx.getOutputTimestamp) {
-      const ts = ctx.getOutputTimestamp();
-      if (ts.performanceTime > 0 && ts.contextTime > 0) return ts.performanceTime - ts.contextTime * 1000;
-    }
-    return performance.now() - ctx.currentTime * 1000 + (ctx.outputLatency || ctx.baseLatency || 0) * 1000;
-  }
-
   function click(time, kind) {
     const ctx = S.audio.ctx;
     const o = ctx.createOscillator();
@@ -671,7 +663,8 @@
     if (!AC) throw new Error('this browser has no Web Audio support');
     if (!S.audio) S.audio = { ctx: new AC({ latencyHint: 'interactive' }), out: null };
     const ctx = S.audio.ctx;
-    if (ctx.state !== 'running') await ctx.resume();
+    if (ctx.state !== 'running') await ctx.resume(); // also wakes a context paused in the background
+    if (ctx.state !== 'running') throw new Error('the browser kept audio paused. Tap Start again');
     // Give the output clock a moment so the audio→performance mapping is valid.
     await new Promise((r) => setTimeout(r, 60));
     if (S.phase !== 'starting') return; // stopped before audio was ready
@@ -681,25 +674,34 @@
     out.connect(ctx.destination);
     S.audio.out = out;
 
-    const beatS = 60 / bpm;
-    const periodS = beatS / sub;
-    const count = Math.max(8, Math.round(lengthSec / periodS));
+    const beatMs = 60000 / bpm;
+    const periodMs = beatMs / sub;
+    const count = Math.max(8, Math.round((lengthSec * 1000) / periodMs));
     const countIn = 4;
-    const startC = ctx.currentTime + 0.15;
-    const firstNote = startC + countIn * beatS;
 
-    for (let b = 0; b < countIn; b++) click(startC + b * beatS, 'count');
+    // The page clock (performance.now) is the master timeline: the note track, the count-in and the
+    // hit judging all use it. Clicks are scheduled on the audio clock to match, read at the same moment.
+    // (The audio system's own output timestamps can be stale after the tab was in the background or
+    // the audio device went idle, which put the whole chart in the past.)
+    const latencyMs = (ctx.outputLatency || ctx.baseLatency || 0) * 1000;
+    const perfNow = performance.now();
+    const ctxNow = ctx.currentTime;
+    const toCtx = (perf) => ctxNow + (perf - perfNow - latencyMs) / 1000; // so the click is *heard* at `perf`
+    const firstBeat = perfNow + Math.max(150, latencyMs + 80);
+    const firstNote = firstBeat + countIn * beatMs;
+
+    for (let b = 0; b < countIn; b++) click(toCtx(firstBeat + b * beatMs), 'count');
     for (let i = 0; i < count; i++) {
-      const t = firstNote + i * periodS;
+      const t = toCtx(firstNote + i * periodMs);
       if (i % sub === 0) click(t, i % (sub * 4) === 0 ? 'accent' : 'beat');
       else if (settings.metroTicks) click(t, 'tick');
     }
 
-    const off = audioToPerfOffset(ctx) + settings.metroOffset;
-    const toPerf = (c) => c * 1000 + off;
-    S.grid = { t0: toPerf(firstNote), period: periodS * 1000, count, targetBpm: bpm, sub };
+    // The audio offset setting shifts when taps are expected (headphone/speaker delay the browser can't see).
+    const off = settings.metroOffset;
+    S.grid = { t0: firstNote + off, period: periodMs, count, targetBpm: bpm, sub };
     S.beats = [];
-    for (let b = 0; b < countIn; b++) S.beats.push(toPerf(startC + b * beatS));
+    for (let b = 0; b < countIn; b++) S.beats.push(firstBeat + b * beatMs + off);
     S.monitor = A.createLiveMonitor({ grid: S.grid });
     S.judge = A.createJudge(S.grid);
   }
