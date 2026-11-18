@@ -19,6 +19,13 @@ No install, no build step, no account. Open `index.html` in a browser. Your data
   behind at speed. History tracks relaxed vs max over time; a shrinking gap means your speed is coming from relaxed
   motion rather than force.
 
+- **Guided.** A session built from your calibration: warm-up, five 20 s metronome work sets in your training zone,
+  cool-down. After each work set it adapts: clean → +5 BPM (capped at the top of your zone), close → same speed,
+  rough → −10 BPM. Two rough sets in a row skip the remaining work sets and go straight to the cool-down. "Tight"
+  on the feel check drops the next set 10 BPM; "Pain" ends the session. Progress carries over to the next session
+  until you recalibrate, and it prompts you to recalibrate when you hit the top of your zone or the calibration is
+  two weeks old.
+
 Speeds are BPM in 1/4 notes (rhythm-game convention): `BPM = taps per second × 15`.
 
 ## What it monitors

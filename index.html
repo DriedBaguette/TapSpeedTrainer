@@ -30,6 +30,7 @@
             <label><input type="radio" name="mode" value="free" checked><span>Speed test</span></label>
             <label><input type="radio" name="mode" value="metronome"><span>Metronome</span></label>
             <label><input type="radio" name="mode" value="calibrate"><span>Calibrate</span></label>
+            <label><input type="radio" name="mode" value="guided"><span>Guided</span></label>
           </fieldset>
 
           <div class="field only-calib calib-info">
@@ -94,16 +95,18 @@
             </select>
           </label>
 
-          <label class="field only-metro">
+          <label class="field audio-opt">
             <span class="label">Audio offset (ms)</span>
             <input id="metro-offset" type="number" step="1" value="0" inputmode="numeric">
             <span class="hint">Compensates for headphone/speaker delay. Use the calibrate button after a set.</span>
           </label>
 
-          <label class="check only-metro"><input id="metro-ticks" type="checkbox"> Click on every note, not just every beat</label>
+          <label class="check audio-opt"><input id="metro-ticks" type="checkbox"> Click on every note, not just every beat</label>
           <label class="check not-calib"><input id="autostop" type="checkbox" checked> Stop the set automatically when my form breaks down</label>
         </div>
       </details>
+
+      <div class="card only-guided" id="guided" aria-live="polite"></div>
 
       <div class="card live" aria-live="polite">
         <div class="live-stats">
@@ -191,6 +194,7 @@
         <h2>A sensible session</h2>
         <ol>
           <li><b>Calibrate</b> on your first session and about once a week after. It sets your training zone.</li>
+          <li><b>Guided mode</b> does the rest for you: warm-up, five work sets that adjust to how each one went, cool-down.</li>
           <li><b>Warm up</b> for 2–3 minutes at an easy metronome speed.</li>
           <li><b>One speed test</b> to see where you are today. Don't max-test every set.</li>
           <li><b>Metronome sets</b> inside your training zone (about 80–90% of max). Move up 5 BPM only when the app says the set was clean.</li>

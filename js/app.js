@@ -34,6 +34,7 @@
     listeningSlot: null,
     painConfirmUntil: 0,
     clearConfirmUntil: 0,
+    guidedStep: null, // { idx, kind, bpm, lengthSec, label } while a guided set runs
     calib: null, // { stage: 'relaxed' | 'max', relaxed: taps[] }
     breakUntil: 0,
   };
@@ -68,6 +69,11 @@
     return v[0] === 'n' ? { taps: +v.slice(1) } : { ms: +v.slice(1) * 1000 };
   }
 
+  /** Guided sessions run on the metronome too. */
+  function usesMetronome() {
+    return settings.mode === 'metronome' || settings.mode === 'guided';
+  }
+
   function save(patch) {
     Store.saveSettings(patch);
     settings = Store.settings;
@@ -96,10 +102,10 @@
     });
     $$('.pad').forEach((p) => (p.querySelector('.pad-key').textContent = settings.keys[+p.dataset.pad].label));
     $('#pads').classList.toggle('single', settings.style === 'single');
-    document.body.classList.toggle('mode-metronome', settings.mode === 'metronome');
-    document.body.classList.toggle('mode-calibrate', settings.mode === 'calibrate');
-    $('#live-extra-label').textContent = settings.mode === 'metronome' ? 'on time' : 'variation';
-    if (!isActive()) $('#live-time').textContent = settings.mode !== 'metronome' && freeLimit().ms ? (freeLimit().ms / 1000).toFixed(1) : '0.0';
+    for (const m of ['free', 'metronome', 'calibrate', 'guided']) document.body.classList.toggle(`mode-${m}`, settings.mode === m);
+    $('#live-extra-label').textContent = usesMetronome() ? 'on time' : 'variation';
+    if (!isActive()) $('#live-time').textContent = !usesMetronome() && freeLimit().ms ? (freeLimit().ms / 1000).toFixed(1) : '0.0';
+    renderGuided();
     const c = settings.calibration;
     $('#calib-summary').textContent = c
       ? `Last calibration (${new Date(c.time).toLocaleDateString()}): relaxed ${Math.round(c.relaxedBpm)}, max ${Math.round(c.maxBpm)}, training zone ${c.zoneLow}–${c.zoneHigh} BPM.`
@@ -241,7 +247,8 @@
 
     const lim = freeLimit();
     if (!S.grid && lim.taps && S.taps.length >= lim.taps) finish('done');
-    else if (snap.breakdown && settings.autostop && !S.calib) finish('breakdown');
+    // Auto-stop protects hard sets; an easy warm-up or cool-down just keeps going.
+    else if (snap.breakdown && settings.autostop && !S.calib && !(S.guidedStep && S.guidedStep.kind !== 'work')) finish('breakdown');
   }
 
   function release(id, t) {
@@ -271,7 +278,7 @@
   function resetLive() {
     $('#live-bpm').textContent = '–';
     $('#live-taps').textContent = '0';
-    $('#live-time').textContent = settings.mode !== 'metronome' && freeLimit().ms ? (freeLimit().ms / 1000).toFixed(1) : '0.0';
+    $('#live-time').textContent = !usesMetronome() && freeLimit().ms ? (freeLimit().ms / 1000).toFixed(1) : '0.0';
     $('#live-extra').textContent = '–';
     showAlert($('#live-alert'), null);
     $('#err-dot').style.left = '50%';
@@ -295,6 +302,167 @@
     showAlert($('#live-alert'), snap.alert);
   }
 
+  // ------------------------------------------------------- guided session
+
+  const STEP_NAME = { warmup: 'Warm-up', cooldown: 'Cool-down' };
+  const OUTCOME_MARK = { up: '↑', top: '↑', down: '↓', hold: '=', done: '' };
+
+  function stepLabel(sess, i) {
+    const st = sess.steps[i];
+    if (st.kind !== 'work') return STEP_NAME[st.kind];
+    return `Work set ${sess.steps.slice(0, i + 1).filter((x) => x.kind === 'work').length}`;
+  }
+
+  function stepBpm(sess, i) {
+    const st = sess.steps[i];
+    if (st.result) return st.result.bpm;
+    return st.kind === 'work' ? sess.workBpm : st.bpm;
+  }
+
+  /** Today's unfinished session for the current calibration, if there is one. */
+  function guidedSession() {
+    const g = settings.guided;
+    const cal = settings.calibration;
+    return g && cal && !g.done && g.day === Store.dayKey(Date.now()) && g.calTime === cal.time ? g : null;
+  }
+
+  function finishedGuidedToday() {
+    const g = settings.guided;
+    const cal = settings.calibration;
+    return g && cal && g.done && g.day === Store.dayKey(Date.now()) && g.calTime === cal.time ? g : null;
+  }
+
+  function newGuidedSession() {
+    const cal = settings.calibration;
+    const plan = A.planGuidedSession(cal, { carry: settings.guidedCarry });
+    return {
+      day: Store.dayKey(Date.now()),
+      calTime: cal.time,
+      zone: plan.zone,
+      steps: plan.steps.map((st) => ({ ...st, status: 'todo', result: null })),
+      idx: 0,
+      startBpm: plan.startBpm,
+      workBpm: plan.startBpm,
+      poorStreak: 0,
+      topReached: false,
+      message: null,
+      done: false,
+    };
+  }
+
+  function skipRemainingWork(sess) {
+    for (let i = sess.idx; i < sess.steps.length; i++) if (sess.steps[i].kind === 'work') sess.steps[i].status = 'skipped';
+  }
+
+  /** Move the session on after a guided set. Returns the message to show in the report. */
+  function advanceGuided(reason, res) {
+    const gs = S.guidedStep;
+    S.guidedStep = null;
+    const sess = guidedSession();
+    if (!sess || sess.idx !== gs.idx) return null;
+    if (reason === 'manual') return { level: 'info', text: 'You stopped this set early, so it doesn’t count. Press Start to redo it.' };
+
+    const step = sess.steps[sess.idx];
+    const next = A.guidedAfterSet(
+      { workBpm: sess.workBpm, poorStreak: sess.poorStreak, zone: sess.zone, topReached: sess.topReached },
+      step,
+      res,
+    );
+    step.status = 'done';
+    step.result = { bpm: gs.bpm, onTimePct: res.onTimePct, outcome: next.outcome };
+    Object.assign(sess, { workBpm: next.workBpm, poorStreak: next.poorStreak, topReached: next.topReached, message: next.message });
+    sess.idx += 1;
+    if (next.endEarly) {
+      skipRemainingWork(sess);
+      sess.idx = sess.steps.findIndex((st) => st.kind === 'cooldown');
+    }
+    if (sess.idx >= sess.steps.length) sess.done = true;
+
+    const patch = { guided: sess };
+    if (step.kind === 'work') patch.guidedCarry = { bpm: sess.workBpm, calTime: sess.calTime };
+    save(patch);
+    const level = next.outcome === 'down' ? 'warn' : next.outcome === 'hold' ? 'info' : 'good';
+    return { level, text: next.message };
+  }
+
+  function applyGuidedFeel(feel) {
+    const sess = guidedSession() || finishedGuidedToday();
+    if (!sess) return;
+    const next = A.guidedAfterFeel({ workBpm: sess.workBpm, zone: sess.zone }, feel);
+    if (next.endNow) {
+      skipRemainingWork(sess);
+      for (let i = sess.idx; i < sess.steps.length; i++) if (sess.steps[i].status === 'todo') sess.steps[i].status = 'skipped';
+      sess.done = true;
+    }
+    if (next !== undefined && next.message) sess.message = next.message;
+    sess.workBpm = next.workBpm;
+    save({ guided: sess, guidedCarry: { bpm: sess.workBpm, calTime: sess.calTime } });
+  }
+
+  function renderGuided() {
+    const el = $('#guided');
+    if (settings.mode !== 'guided') return;
+    const cal = settings.calibration;
+    if (!cal) {
+      el.innerHTML =
+        '<h2>Guided training</h2><p class="sub">Guided sessions are built from your calibration: your relaxed speed, your max, and the training zone between them. ' +
+        'Calibrate first. It takes under a minute.</p><div class="actions"><button type="button" class="primary" id="go-calibrate">Calibrate now</button></div>';
+      $('#go-calibrate').addEventListener('click', () => save({ mode: 'calibrate' }));
+      return;
+    }
+
+    const active = guidedSession();
+    const finished = !active && finishedGuidedToday();
+    const sess = active || finished || newGuidedSession();
+    const title = active ? 'Today’s session' : finished ? 'Session complete' : 'Next session';
+    const ageDays = Math.floor((Date.now() - cal.time) / 86400000);
+
+    let html =
+      `<div class="guided-head"><h2>${title}</h2><span class="sub">Training zone ${sess.zone.low}–${sess.zone.high} BPM · ` +
+      '<button type="button" class="linkish" id="g-recal">Recalibrate</button></span></div>';
+
+    html += '<ol class="plan">';
+    sess.steps.forEach((st, i) => {
+      const current = !finished && i === sess.idx;
+      const cls = current ? 'current' : st.status;
+      const mark = st.status === 'done' ? '✓' : st.status === 'skipped' ? '–' : current ? '▶' : '○';
+      let meta = st.status === 'skipped' ? 'skipped' : `${stepBpm(sess, i)} BPM · ${st.lengthSec}s`;
+      if (st.kind === 'work' && st.status === 'todo' && !current) meta = `~${sess.workBpm} BPM · ${st.lengthSec}s`;
+      const result = st.result
+        ? ` <span class="p-result">${Math.round(st.result.onTimePct * 100)}% on time ${OUTCOME_MARK[st.result.outcome] || ''}</span>`
+        : '';
+      html +=
+        `<li class="${cls}"><span class="p-mark" aria-hidden="true">${mark}</span>` +
+        `<span class="p-name">${stepLabel(sess, i)}${result}</span><span class="p-meta">${meta}</span></li>`;
+    });
+    html += '</ol>';
+
+    const notes = [];
+    if (sess.message && (active || finished)) notes.push({ level: 'info', text: sess.message });
+    if (finished) {
+      const work = sess.steps.filter((st) => st.kind === 'work' && st.result);
+      const clean = work.filter((st) => st.result.outcome === 'up' || st.result.outcome === 'top').length;
+      notes.push({
+        level: 'good',
+        text:
+          `${clean} of ${work.length} work sets clean, ${sess.startBpm} → ${work.length ? work[work.length - 1].result.bpm : sess.startBpm} BPM. ` +
+          `Next session starts at ${sess.workBpm} BPM.`,
+      });
+    }
+    if (sess.topReached) notes.push({ level: 'info', text: 'You reached the top of your zone. Recalibrate to raise it.' });
+    if (ageDays >= 14) notes.push({ level: 'info', text: `Your calibration is ${ageDays} days old. Recalibrate so the zone matches your current speed.` });
+    if (!active && !finished) notes.push({ level: 'info', text: 'Press Start below to begin. Each work set adjusts to how the last one went.' });
+    for (const n of notes) {
+      html += `<div class="alert guided-msg lvl-${n.level}"><span class="icon" aria-hidden="true">${ICON[n.level]}</span><span>${esc(n.text)}</span></div>`;
+    }
+    if (active && sess.idx > 0) html += '<p class="sub" style="margin-top:10px"><button type="button" class="linkish" id="g-reset">Start this session over</button></p>';
+
+    el.innerHTML = html;
+    $('#g-recal').addEventListener('click', () => save({ mode: 'calibrate' }));
+    const reset = $('#g-reset');
+    if (reset) reset.addEventListener('click', () => save({ guided: null }));
+  }
+
   // ------------------------------------------------------------- set flow
 
   function painToday() {
@@ -311,6 +479,18 @@
     }
     S.painConfirmUntil = 0;
 
+    S.guidedStep = null;
+    if (settings.mode === 'guided') {
+      if (!settings.calibration) return setStatus('Calibrate first. Guided sessions are built from your calibration.');
+      let sess = guidedSession();
+      if (!sess) {
+        sess = newGuidedSession();
+        save({ guided: sess });
+      }
+      const step = sess.steps[sess.idx];
+      S.guidedStep = { idx: sess.idx, kind: step.kind, bpm: stepBpm(sess, sess.idx), lengthSec: step.lengthSec, label: stepLabel(sess, sess.idx) };
+    }
+
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     S.earlyStart = Date.now() < S.restUntil;
     S.taps = [];
@@ -321,9 +501,10 @@
     $('#report').hidden = true;
     settingsEl.open = false;
     settingsEl.inert = true;
+    document.body.classList.add('running');
     $('#start').hidden = true;
     $('#stop').hidden = false;
-    $('#err-meter').hidden = settings.mode !== 'metronome';
+    $('#err-meter').hidden = !usesMetronome();
 
     if (settings.mode === 'calibrate') {
       S.phase = 'armed';
@@ -337,7 +518,9 @@
       S.phase = 'starting';
       setStatus('Starting metronome…');
       try {
-        await startMetronome();
+        await startMetronome(
+          S.guidedStep ? { bpm: S.guidedStep.bpm, sub: 4, lengthSec: S.guidedStep.lengthSec } : undefined,
+        );
       } catch (err) {
         setStatus('Couldn’t start audio: ' + err.message);
         S.phase = 'idle';
@@ -379,7 +562,7 @@
         const end = t0 + count * period;
         if (now < t0 - period / 2) {
           const beatsLeft = Math.ceil((t0 - now) / (period * S.grid.sub));
-          setStatus(`Count-in… ${beatsLeft}`);
+          setStatus(`${S.guidedStep ? `${S.guidedStep.label} · ${S.guidedStep.bpm} BPM. ` : ''}Count-in… ${beatsLeft}`);
         } else if (S.taps.length === 0 && now > t0 + 2000) {
           setStatus('Tap along with the clicks!');
         } else if (now >= t0 - period / 2 && now < t0 + 100) {
@@ -420,7 +603,8 @@
     o.stop(time + 0.05);
   }
 
-  async function startMetronome() {
+  async function startMetronome(params) {
+    const { bpm, sub, lengthSec } = params || { bpm: settings.metroBpm, sub: settings.metroSubdiv, lengthSec: settings.metroLength };
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) throw new Error('this browser has no Web Audio support');
     if (!S.audio) S.audio = { ctx: new AC({ latencyHint: 'interactive' }), out: null };
@@ -435,11 +619,9 @@
     out.connect(ctx.destination);
     S.audio.out = out;
 
-    const bpm = settings.metroBpm;
-    const sub = settings.metroSubdiv;
     const beatS = 60 / bpm;
     const periodS = beatS / sub;
-    const count = Math.max(8, Math.round(settings.metroLength / periodS));
+    const count = Math.max(8, Math.round(lengthSec / periodS));
     const countIn = 4;
     const startC = ctx.currentTime + 0.15;
     const firstNote = startC + countIn * beatS;
@@ -479,6 +661,7 @@
     cancelAnimationFrame(S.raf);
     stopAudio();
     settingsEl.inert = false;
+    document.body.classList.remove('running');
     $('#start').hidden = false;
     $('#stop').hidden = true;
     $('#err-meter').hidden = true;
@@ -524,6 +707,10 @@
     }
 
     if (!res.ok) {
+      if (S.guidedStep) {
+        S.guidedStep = null;
+        return setStatus(`${REASONS[reason]} ${res.reason} This set doesn’t count. Press Start to redo it.`);
+      }
       setStatus(`${REASONS[reason]} ${res.reason}`);
       return;
     }
@@ -538,7 +725,7 @@
       res.level = 'stop';
     }
     const cal = settings.calibration;
-    if (cal && res.mode === 'metronome' && res.targetBpm > cal.zoneHigh) {
+    if (cal && !S.guidedStep && res.mode === 'metronome' && res.targetBpm > cal.zoneHigh) {
       res.issues.push({
         level: 'info',
         title: 'Above your training zone',
@@ -581,8 +768,10 @@
         unstableRate: +res.unstableRate.toFixed(1),
         meanErr: +res.meanErr.toFixed(1),
       });
+      if (S.guidedStep) Object.assign(record, { guided: true, guidedStep: S.guidedStep.kind });
     }
     Store.addSet(record);
+    if (S.guidedStep) res.guidedMsg = advanceGuided(reason, res);
 
     const restSec = A.recommendedRestSec(res.durationMs, res.level);
     S.restUntil = Date.now() + restSec * 1000;
@@ -705,7 +894,8 @@
       </ul>`;
       html += issueList(res.issues);
       html += `<p class="recommend">Start metronome work at <b>${res.recommendBpm} BPM</b>.
-        <button type="button" class="secondary" id="practise-at">Practise at ${res.recommendBpm}</button></p>`;
+        <button type="button" class="primary" id="go-guided">Start guided training</button>
+        <button type="button" class="secondary" id="practise-at">Just set the metronome</button></p>`;
       html += '<div class="chart"><h3>Relaxed vs max</h3><p class="sub">Rolling speed over 8 taps in each step. Shaded = your training zone.</p><div id="rep-a"></div></div>';
     } else if (res.mode === 'free') {
       html +=
@@ -735,10 +925,14 @@
         tile(`${res.misses} / ${res.extras}`, 'missed / extra') +
         '</div>';
       html += issueList(res.issues);
-      html += `<p class="recommend">${esc(res.advice)}`;
-      if (res.recommendBpm !== res.targetBpm)
-        html += ` <button type="button" class="secondary" id="practise-at">Set to ${res.recommendBpm} BPM</button>`;
-      html += '</p>';
+      if (res.guidedMsg) {
+        html += `<div class="alert lvl-${res.guidedMsg.level}"><span class="icon" aria-hidden="true">${ICON[res.guidedMsg.level]}</span><span>${esc(res.guidedMsg.text)}</span></div>`;
+      } else {
+        html += `<p class="recommend">${esc(res.advice)}`;
+        if (res.recommendBpm !== res.targetBpm)
+          html += ` <button type="button" class="secondary" id="practise-at">Set to ${res.recommendBpm} BPM</button>`;
+        html += '</p>';
+      }
       if (Math.abs(res.meanErr) > 10 && res.sd < res.period * 0.25) {
         const newOff = settings.metroOffset + Math.round(res.meanErr);
         html += `<p class="sub">Felt on the beat? Your taps averaged ${sign}${res.meanErr.toFixed(0)} ms. That is probably audio delay.
@@ -815,6 +1009,13 @@
         practise.textContent = 'Done. Metronome mode set';
         practise.disabled = true;
       });
+    const goGuided = $('#go-guided');
+    if (goGuided)
+      goGuided.addEventListener('click', () => {
+        save({ mode: 'guided' });
+        $('#report').hidden = true;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
     const offsetBtn = $('#calibrate');
     if (offsetBtn)
       offsetBtn.addEventListener('click', () => {
@@ -846,6 +1047,7 @@
         msg.innerHTML = `<span class="icon" aria-hidden="true">${ICON[FEEL[feel].level]}</span><span>${esc(FEEL[feel].text)}</span>`;
         if (feel === 'pain') S.restUntil = Date.now() + 24 * 3600 * 1000;
         else if (feel === 'tight') S.restUntil = Math.max(S.restUntil, Date.now() + 120 * 1000);
+        if (record.guided) applyGuidedFeel(feel);
         updateDayBanner();
       }),
     );
@@ -863,7 +1065,12 @@
       btn.textContent = `Rest ${fmtClock(left)} (start anyway)`;
       btn.classList.add('resting');
     } else {
-      btn.textContent = 'Start';
+      let label = 'Start';
+      if (settings.mode === 'guided' && settings.calibration) {
+        const sess = guidedSession();
+        label = sess ? `Start ${stepLabel(sess, sess.idx).toLowerCase()} · ${stepBpm(sess, sess.idx)} BPM` : 'Start guided session';
+      }
+      if (btn.textContent !== label) btn.textContent = label;
       btn.classList.remove('resting');
     }
   }
@@ -977,7 +1184,7 @@
                     ? `relaxed ${Math.round(s.relaxedBpm)} · max ${Math.round(s.maxBpm)} · zone ${s.zoneLow}–${s.zoneHigh}`
                     : `${s.targetBpm} BPM · ${Math.round(s.onTimePct * 100)}% on time · UR ${Math.round(s.unstableRate)}`;
               const form = s.issues && s.issues.length ? s.issues.join('; ') : 'clean';
-              return `<tr><td>${esc(date(s))}</td><td>${{ free: 'Speed test', metronome: 'Metronome', calibration: 'Calibration' }[s.mode] || s.mode}</td><td>${esc(result)}</td>` +
+              return `<tr><td>${esc(date(s))}</td><td>${s.guided ? 'Guided' : { free: 'Speed test', metronome: 'Metronome', calibration: 'Calibration' }[s.mode] || s.mode}</td><td>${esc(result)}</td>` +
                 `<td>${ICON[s.level] || ''} ${esc(form)}</td><td>${esc(FEEL_LABEL[s.feel] || '–')}</td></tr>`;
             })
             .join('')

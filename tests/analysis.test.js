@@ -232,3 +232,57 @@ test('calibration rejects a step with too few taps', () => {
   const res = A.analyzeCalibration(tapsFrom(steady(5, 100)), tapsFrom(steady(90, 80)), opts);
   assert.equal(res.ok, false);
 });
+
+// ---------------------------------------------------------- guided training
+
+const cal = { time: 1, relaxedBpm: 125, zoneLow: 150, zoneHigh: 170, recommendBpm: 155 };
+const fakeSet = (target, next, level = 'good') => ({ targetBpm: target, recommendBpm: next, level });
+
+test('guided plan: warm-up, 5 work sets, cool-down, starting at the calibration BPM', () => {
+  const plan = A.planGuidedSession(cal);
+  assert.deepEqual(plan.steps.map((s) => s.kind), ['warmup', 'work', 'work', 'work', 'work', 'work', 'cooldown']);
+  assert.equal(plan.startBpm, 155);
+  assert.equal(plan.steps[0].bpm, 115); // 90% of relaxed, rounded to 5
+});
+
+test('guided plan carries progress over, but not across a new calibration', () => {
+  assert.equal(A.planGuidedSession(cal, { carry: { bpm: 165, calTime: 1 } }).startBpm, 165);
+  assert.equal(A.planGuidedSession(cal, { carry: { bpm: 165, calTime: 0 } }).startBpm, 155);
+  assert.equal(A.planGuidedSession(cal, { carry: { bpm: 300, calTime: 1 } }).startBpm, 170); // clamped to zone
+});
+
+test('guided progression: up on clean, hold on close, down on rough, capped at zone top', () => {
+  const zone = { low: 150, high: 170, warmup: 115 };
+  const work = { kind: 'work' };
+  let st = { workBpm: 160, poorStreak: 0, zone, topReached: false };
+  st = A.guidedAfterSet(st, work, fakeSet(160, 165));
+  assert.equal(st.outcome, 'up');
+  assert.equal(st.workBpm, 165);
+  st = A.guidedAfterSet(st, work, fakeSet(165, 165));
+  assert.equal(st.outcome, 'hold');
+  st = A.guidedAfterSet(st, work, fakeSet(165, 170));
+  st = A.guidedAfterSet(st, work, fakeSet(170, 175));
+  assert.equal(st.outcome, 'top');
+  assert.equal(st.workBpm, 170);
+  assert.ok(st.topReached);
+  st = A.guidedAfterSet(st, work, fakeSet(170, 160, 'warn'));
+  assert.equal(st.outcome, 'down');
+  assert.equal(st.workBpm, 160);
+});
+
+test('guided session ends work sets after two rough sets in a row', () => {
+  const zone = { low: 150, high: 170, warmup: 115 };
+  let st = { workBpm: 150, poorStreak: 0, zone, topReached: false };
+  st = A.guidedAfterSet(st, { kind: 'work' }, fakeSet(150, 140, 'warn'));
+  assert.equal(st.endEarly, false);
+  st = A.guidedAfterSet(st, { kind: 'work' }, fakeSet(140, 140, 'stop'));
+  assert.equal(st.endEarly, true);
+  assert.equal(st.workBpm, 140); // never below zone low - 10
+});
+
+test('guided feel check: tight drops 10, pain ends the session', () => {
+  const st = { workBpm: 160, poorStreak: 0, zone: { low: 150, high: 170 } };
+  assert.equal(A.guidedAfterFeel(st, 'tight').workBpm, 150);
+  assert.equal(A.guidedAfterFeel(st, 'pain').endNow, true);
+  assert.equal(A.guidedAfterFeel(st, 'fine'), st);
+});

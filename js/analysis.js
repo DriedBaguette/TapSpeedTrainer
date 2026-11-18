@@ -742,6 +742,83 @@
     };
   }
 
+  // ------------------------------------------------------- guided training
+
+  /**
+   * Build a guided session from a calibration.
+   * cal:  { time, relaxedBpm, zoneLow, zoneHigh, recommendBpm }
+   * opts: { carry: { bpm, calTime } | null, workSets, workLengthSec }
+   * BPM is always in 1/4 notes (4 taps per beat), matching the calibration.
+   */
+  function planGuidedSession(cal, opts = {}) {
+    const zone = { warmup: round5(cal.relaxedBpm * 0.9), low: cal.zoneLow, high: cal.zoneHigh };
+    // Pick up where the last session left off, unless there's been a newer calibration.
+    const carried = opts.carry && opts.carry.calTime === cal.time ? opts.carry.bpm : null;
+    const startBpm = clamp(round5(carried != null ? carried : cal.recommendBpm), zone.low - 10, zone.high);
+    const workSets = opts.workSets || 5;
+    const workLengthSec = opts.workLengthSec || 20;
+    const steps = [{ kind: 'warmup', bpm: zone.warmup, lengthSec: 30 }];
+    for (let i = 0; i < workSets; i++) steps.push({ kind: 'work', bpm: null, lengthSec: workLengthSec });
+    steps.push({ kind: 'cooldown', bpm: zone.warmup, lengthSec: 30 });
+    return { zone, startBpm, steps };
+  }
+
+  /**
+   * Decide what happens after a guided set.
+   * state: { workBpm, poorStreak, zone, topReached }
+   * res:   the analyzeMetronome result for the set (or null if it couldn't be analysed)
+   * Returns the new state plus { outcome: 'up'|'hold'|'down'|'top'|'done', message, endEarly }.
+   */
+  function guidedAfterSet(state, step, res) {
+    if (step.kind !== 'work') {
+      return {
+        ...state,
+        outcome: 'done',
+        endEarly: false,
+        message: step.kind === 'warmup' ? `Warmed up. Work sets start at ${state.workBpm} BPM.` : 'Session complete. Nice work.',
+      };
+    }
+    const floor = state.zone.low - 10;
+    let { workBpm, poorStreak } = state;
+    let outcome;
+    let message;
+    const poor = !res || res.level === 'stop' || res.recommendBpm < res.targetBpm;
+    const clean = !poor && res.recommendBpm > res.targetBpm;
+    if (poor) {
+      poorStreak += 1;
+      workBpm = Math.max(floor, workBpm - 10);
+      outcome = 'down';
+      message = `Too fast for clean reps. Next set: ${workBpm} BPM.`;
+    } else if (clean) {
+      poorStreak = 0;
+      if (workBpm >= state.zone.high) {
+        outcome = 'top';
+        message = `Clean at the top of your zone (${state.zone.high}). Stay here, and recalibrate soon: you’ve probably got faster.`;
+      } else {
+        workBpm = Math.min(state.zone.high, workBpm + 5);
+        outcome = 'up';
+        message = `Clean set. Next set: ${workBpm} BPM.`;
+      }
+    } else {
+      poorStreak = 0;
+      outcome = 'hold';
+      message = `Close. Stay at ${workBpm} BPM until it’s clean.`;
+    }
+    const endEarly = poorStreak >= 2;
+    if (endEarly) message = 'Two rough sets in a row, so the work sets end here. Finish with the cool-down.';
+    return { ...state, workBpm, poorStreak, outcome, message, endEarly, topReached: state.topReached || outcome === 'top' };
+  }
+
+  /** Apply the post-set "how do your hands feel?" answer to a guided session. */
+  function guidedAfterFeel(state, feel) {
+    if (feel === 'pain') return { ...state, endNow: true, message: 'Session ended. Rest your hands for today.' };
+    if (feel === 'tight') {
+      const workBpm = Math.max(state.zone.low - 10, state.workBpm - 10);
+      return { ...state, workBpm, message: `Hands feel tight, so the next set drops to ${workBpm} BPM. Take your time resting.` };
+    }
+    return state;
+  }
+
   // ------------------------------------------------------------ rest logic
 
   /** Rest after a set: roughly 2× the work, at least 30 s, at most 3 min. */
@@ -763,6 +840,9 @@
     analyzeFree,
     analyzeMetronome,
     analyzeCalibration,
+    planGuidedSession,
+    guidedAfterSet,
+    guidedAfterFeel,
     createLiveMonitor,
     recommendedRestSec,
     onTimeWindow,

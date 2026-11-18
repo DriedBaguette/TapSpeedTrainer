@@ -23,6 +23,8 @@
     metroTicks: false,
     autostop: true,
     calibration: null, // latest { time, relaxedBpm, maxBpm, relaxedCv, zoneLow, zoneHigh, recommendBpm }
+    guided: null, // current guided session (see app.js)
+    guidedCarry: null, // { bpm, calTime } — where the next guided session starts
   };
 
   let memory = { settings: { ...DEFAULT_SETTINGS }, sets: [] };
