@@ -238,17 +238,25 @@ test('calibration rejects a step with too few taps', () => {
 const cal = { time: 1, relaxedBpm: 125, zoneLow: 150, zoneHigh: 170, recommendBpm: 155 };
 const fakeSet = (target, next, level = 'good') => ({ targetBpm: target, recommendBpm: next, level });
 
-test('guided plan: warm-up, 5 work sets, cool-down, starting at the calibration BPM', () => {
+test('session plan: warm-up, calibration, 5 work sets, cool-down', () => {
   const plan = A.planGuidedSession(cal);
-  assert.deepEqual(plan.steps.map((s) => s.kind), ['warmup', 'work', 'work', 'work', 'work', 'work', 'cooldown']);
-  assert.equal(plan.startBpm, 155);
-  assert.equal(plan.steps[0].bpm, 115); // 90% of relaxed, rounded to 5
+  assert.deepEqual(plan.steps.map((s) => s.kind), ['warmup', 'calibrate', 'work', 'work', 'work', 'work', 'work', 'cooldown']);
+  assert.equal(plan.steps[0].bpm, 115); // 90% of last relaxed speed, rounded to 5
 });
 
-test('guided plan carries progress over, but not across a new calibration', () => {
-  assert.equal(A.planGuidedSession(cal, { carry: { bpm: 165, calTime: 1 } }).startBpm, 165);
-  assert.equal(A.planGuidedSession(cal, { carry: { bpm: 165, calTime: 0 } }).startBpm, 155);
-  assert.equal(A.planGuidedSession(cal, { carry: { bpm: 300, calTime: 1 } }).startBpm, 170); // clamped to zone
+test('first-ever session warms up at an easy default pace', () => {
+  assert.equal(A.planGuidedSession(null).steps[0].bpm, 90);
+});
+
+test('calibration sets the zone and starting work speed', () => {
+  const { zone, startBpm } = A.zoneFromCalibration(cal);
+  assert.deepEqual(zone, { warmup: 115, low: 150, high: 170 });
+  assert.equal(startBpm, 155);
+});
+
+test('warm-up message points to calibration until the zone is known', () => {
+  const before = A.guidedAfterSet({ workBpm: null, poorStreak: 0, zone: null }, { kind: 'warmup' }, null);
+  assert.match(before.message, /Next: calibration/);
 });
 
 test('guided progression: up on clean, hold on close, down on rough, capped at zone top', () => {

@@ -9,23 +9,18 @@
   const KEY = 'tapSpeedTrainer.v1';
 
   const DEFAULT_SETTINGS = {
-    mode: 'free',
     style: 'alternate',
     keys: [
       { code: 'KeyZ', label: 'Z' },
       { code: 'KeyX', label: 'X' },
     ],
-    freeLength: 't20',
-    metroBpm: 150,
-    metroSubdiv: 4,
-    metroLength: 20,
     metroOffset: 0,
     metroTicks: false,
     autostop: true,
     calibration: null, // latest { time, relaxedBpm, maxBpm, relaxedCv, zoneLow, zoneHigh, recommendBpm }
-    guided: null, // current guided session (see app.js)
-    guidedCarry: null, // { bpm, calTime } — where the next guided session starts
+    guided: null, // today's session (see app.js)
   };
+
 
   let memory = { settings: { ...DEFAULT_SETTINGS }, sets: [] };
 
@@ -34,8 +29,10 @@
       const raw = localStorage.getItem(KEY);
       if (raw) {
         const data = JSON.parse(raw);
+        const stored = { ...(data.settings || {}) };
+        for (const k of ['mode', 'freeLength', 'metroBpm', 'metroSubdiv', 'metroLength', 'guidedCarry']) delete stored[k];
         memory = {
-          settings: { ...DEFAULT_SETTINGS, ...(data.settings || {}) },
+          settings: { ...DEFAULT_SETTINGS, ...stored },
           sets: Array.isArray(data.sets) ? data.sets : [],
         };
       }

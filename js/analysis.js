@@ -870,23 +870,29 @@
 
   // ------------------------------------------------------- guided training
 
+  const DEFAULT_WARMUP_BPM = 90;
+
   /**
-   * Build a guided session from a calibration.
-   * cal:  { time, relaxedBpm, zoneLow, zoneHigh, recommendBpm }
-   * opts: { carry: { bpm, calTime } | null, workSets, workLengthSec }
+   * Plan a session: warm-up, calibration, work sets, cool-down.
+   * The calibration step sets the day's training zone, so work-set speeds are
+   * only known once it's done (see zoneFromCalibration).
+   * lastCal: the most recent calibration, if any — only used to pick an easy warm-up pace.
    * BPM is always in 1/4 notes (4 taps per beat), matching the calibration.
    */
-  function planGuidedSession(cal, opts = {}) {
-    const zone = { warmup: round5(cal.relaxedBpm * 0.9), low: cal.zoneLow, high: cal.zoneHigh };
-    // Pick up where the last session left off, unless there's been a newer calibration.
-    const carried = opts.carry && opts.carry.calTime === cal.time ? opts.carry.bpm : null;
-    const startBpm = clamp(round5(carried != null ? carried : cal.recommendBpm), zone.low - 10, zone.high);
+  function planGuidedSession(lastCal, opts = {}) {
+    const warmup = lastCal ? round5(lastCal.relaxedBpm * 0.9) : DEFAULT_WARMUP_BPM;
     const workSets = opts.workSets || 5;
     const workLengthSec = opts.workLengthSec || 20;
-    const steps = [{ kind: 'warmup', bpm: zone.warmup, lengthSec: 30 }];
+    const steps = [{ kind: 'warmup', bpm: warmup, lengthSec: 30 }, { kind: 'calibrate', bpm: null, lengthSec: null }];
     for (let i = 0; i < workSets; i++) steps.push({ kind: 'work', bpm: null, lengthSec: workLengthSec });
-    steps.push({ kind: 'cooldown', bpm: zone.warmup, lengthSec: 30 });
-    return { zone, startBpm, steps };
+    steps.push({ kind: 'cooldown', bpm: warmup, lengthSec: 30 });
+    return { steps };
+  }
+
+  /** Training zone and starting work-set speed from a calibration. */
+  function zoneFromCalibration(cal) {
+    const zone = { warmup: round5(cal.relaxedBpm * 0.9), low: cal.zoneLow, high: cal.zoneHigh };
+    return { zone, startBpm: clamp(round5(cal.recommendBpm), zone.low, zone.high) };
   }
 
   /**
@@ -901,7 +907,12 @@
         ...state,
         outcome: 'done',
         endEarly: false,
-        message: step.kind === 'warmup' ? `Warmed up. Work sets start at ${state.workBpm} BPM.` : 'Session complete. Nice work.',
+        message:
+          step.kind === 'warmup'
+            ? state.zone
+              ? `Warmed up. Work sets start at ${state.workBpm} BPM.`
+              : 'Warmed up. Next: calibration, to set today’s training zone.'
+            : 'Session complete. Nice work.',
       };
     }
     const floor = state.zone.low - 10;
@@ -967,6 +978,7 @@
     analyzeMetronome,
     analyzeCalibration,
     planGuidedSession,
+    zoneFromCalibration,
     createJudge,
     judgeWindows,
     gradeFor,

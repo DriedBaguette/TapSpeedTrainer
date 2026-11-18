@@ -22,24 +22,9 @@
     <section id="view-train" class="view" role="tabpanel">
       <div id="day-banner" class="banner" hidden></div>
 
-      <details id="settings" class="card" open>
+      <details id="settings" class="card">
         <summary>Set-up</summary>
         <div class="settings-grid">
-          <fieldset class="seg seg-modes" aria-label="Mode">
-            <legend>Mode</legend>
-            <label><input type="radio" name="mode" value="free" checked><span>Speed test</span></label>
-            <label><input type="radio" name="mode" value="metronome"><span>Metronome</span></label>
-            <label><input type="radio" name="mode" value="calibrate"><span>Calibrate</span></label>
-            <label><input type="radio" name="mode" value="guided"><span>Guided</span></label>
-          </fieldset>
-
-          <div class="field only-calib calib-info">
-            <span class="label">How calibration works</span>
-            <span class="hint"><b>Step 1:</b> 15 seconds at a relaxed pace you could keep up for a minute. <b>Break:</b> 15 seconds.
-              <b>Step 2:</b> 10 seconds as fast as you can. You get a training zone and a starting BPM for the metronome.</span>
-            <span class="hint" id="calib-summary"></span>
-          </div>
-
           <fieldset class="seg" aria-label="Technique">
             <legend>Technique</legend>
             <label><input type="radio" name="style" value="alternate" checked><span>Two fingers, alternating</span></label>
@@ -55,58 +40,18 @@
             <span class="hint">Click a key, then press the key you want. Mouse and touch work on the pads too.</span>
           </div>
 
-          <label class="field only-free">
-            <span class="label">Set length</span>
-            <select id="free-length">
-              <option value="t10">10 seconds</option>
-              <option value="t20" selected>20 seconds</option>
-              <option value="t30">30 seconds</option>
-              <option value="t60">60 seconds</option>
-              <option value="n100">100 taps</option>
-              <option value="n200">200 taps</option>
-            </select>
-          </label>
-
-          <label class="field only-metro">
-            <span class="label">Target BPM</span>
-            <span class="stepper">
-              <button type="button" data-step="-5" aria-label="Lower BPM by 5">−</button>
-              <input id="metro-bpm" type="number" min="40" max="400" step="1" value="150" inputmode="numeric">
-              <button type="button" data-step="5" aria-label="Raise BPM by 5">+</button>
-            </span>
-          </label>
-
-          <label class="field only-metro">
-            <span class="label">Taps per beat</span>
-            <select id="metro-subdiv">
-              <option value="4" selected>4 (1/4 notes, streams)</option>
-              <option value="2">2 (1/2 notes)</option>
-              <option value="1">1 (on the beat)</option>
-            </select>
-          </label>
-
-          <label class="field only-metro">
-            <span class="label">Set length</span>
-            <select id="metro-length">
-              <option value="10">10 seconds</option>
-              <option value="20" selected>20 seconds</option>
-              <option value="30">30 seconds</option>
-              <option value="60">60 seconds</option>
-            </select>
-          </label>
-
-          <label class="field audio-opt">
+          <label class="field">
             <span class="label">Audio offset (ms)</span>
             <input id="metro-offset" type="number" step="1" value="0" inputmode="numeric">
-            <span class="hint">Compensates for headphone/speaker delay. Use the calibrate button after a set.</span>
+            <span class="hint">Compensates for headphone or speaker delay. A work-set report offers to set this for you.</span>
           </label>
 
-          <label class="check audio-opt"><input id="metro-ticks" type="checkbox"> Click on every note, not just every beat</label>
-          <label class="check not-calib"><input id="autostop" type="checkbox" checked> Stop the set automatically when my form breaks down</label>
+          <label class="check"><input id="metro-ticks" type="checkbox"> Click on every note, not just every beat</label>
+          <label class="check"><input id="autostop" type="checkbox" checked> Stop a work set automatically when my form breaks down</label>
         </div>
       </details>
 
-      <div class="card only-guided" id="guided" aria-live="polite"></div>
+      <div class="card" id="guided" aria-live="polite"></div>
 
       <div class="card live" aria-live="polite">
         <div class="live-stats">
@@ -147,18 +92,13 @@
         <div class="chart" id="hist-calib"></div>
       </div>
       <div class="card">
-        <h2>Speed tests</h2>
-        <p class="sub">Average speed per set. Peak is the fastest 16 taps.</p>
-        <div class="chart" id="hist-speed"></div>
-      </div>
-      <div class="card">
         <h2>Rhythm evenness</h2>
-        <p class="sub">Variation in tap spacing (%). Lower is better; under 10% is solid.</p>
+        <p class="sub">Variation in tap spacing during each calibration (%). Lower is better; under 10% is solid.</p>
         <div class="chart" id="hist-cv"></div>
       </div>
       <div class="card">
-        <h2>Metronome sets</h2>
-        <p class="sub">Share of taps on the click at each target BPM.</p>
+        <h2>Work sets</h2>
+        <p class="sub">Share of taps on the click in each work set.</p>
         <div class="chart" id="hist-metro"></div>
       </div>
       <div class="card">
@@ -187,15 +127,13 @@
         </ul>
       </div>
       <div class="card">
-        <h2>A sensible session</h2>
+        <h2>How a session works</h2>
         <ol>
-          <li><b>Calibrate</b> on your first session and about once a week after. It sets your training zone.</li>
-          <li><b>Guided mode</b> does the rest for you: warm-up, five work sets that adjust to how each one went, cool-down.</li>
-          <li><b>Warm up</b> for 2–3 minutes at an easy metronome speed.</li>
-          <li><b>One speed test</b> to see where you are today. Don't max-test every set.</li>
-          <li><b>Metronome sets</b> inside your training zone (about 80–90% of max). Move up 5 BPM only when the app says the set was clean.</li>
-          <li><b>Rest</b> roughly twice as long as each set. The app counts it down for you.</li>
-          <li><b>Stop for the day</b> when quality drops two sets in a row. Tired reps teach tense habits.</li>
+          <li><b>Warm-up.</b> 30 seconds at an easy pace on the metronome.</li>
+          <li><b>Calibration.</b> 15 seconds relaxed, a short break, then 10 seconds as fast as you can. This sets today’s training zone (about 80–90% of your max). If you calibrated in the last week you can reuse it instead.</li>
+          <li><b>Five work sets.</b> 20 seconds each inside your zone. Clean set: the next one goes up 5 BPM. Rough set: down 10. Two rough sets in a row and the session skips to the cool-down.</li>
+          <li><b>Cool-down.</b> 30 seconds easy.</li>
+          <li><b>Rest</b> between steps. The app counts it down and asks how your hands feel.</li>
         </ol>
       </div>
       <div class="card">
