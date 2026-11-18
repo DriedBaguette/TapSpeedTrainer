@@ -179,3 +179,17 @@ test('rest scales with set length and is longer after a bad set', () => {
   assert.equal(A.recommendedRestSec(30000, 'warn'), 90);
   assert.equal(A.recommendedRestSec(300000, 'good'), 180);
 });
+
+test('live BPM stays steady under normal input noise', () => {
+  // Steady 180 BPM with ±8 ms of per-tap timing noise (keyboard polling, finger variation).
+  const r = rng(7);
+  const m = A.createLiveMonitor();
+  let t = 0;
+  const shown = [];
+  for (let i = 0; i < 200; i++) {
+    t += 83.33;
+    const snap = m.push({ t: t + (r() * 2 - 1) * 8, key: i % 2 });
+    if (i > 20) shown.push(snap.bpm);
+  }
+  assert.ok(Math.min(...shown) > 175 && Math.max(...shown) < 185, `${Math.min(...shown)}–${Math.max(...shown)}`);
+});

@@ -102,6 +102,11 @@
     return bpmFromInterval(best / w);
   }
 
+  /** Taps averaged per point on the "speed through the set" chart. */
+  const SMOOTH = 8;
+  /** Intervals averaged for the live BPM readout (~1–2 s of tapping). */
+  const LIVE_WINDOW = 12;
+
   const LEVEL_RANK = { good: 0, info: 1, warn: 2, stop: 3 };
 
   function worstLevel(issues) {
@@ -337,8 +342,8 @@
 
     const t0 = taps[0].t;
     const speedSeries = [];
-    for (let i = 4; i < n; i++) {
-      speedSeries.push({ x: (taps[i].t - t0) / 1000, y: bpmFromInterval((taps[i].t - taps[i - 4].t) / 4) });
+    for (let i = SMOOTH; i < n; i++) {
+      speedSeries.push({ x: (taps[i].t - t0) / 1000, y: bpmFromInterval((taps[i].t - taps[i - SMOOTH].t) / SMOOTH) });
     }
     const intervalSeries = [];
     for (let i = 1; i < n; i++) {
@@ -494,8 +499,8 @@
 
     const t00 = taps[0].t;
     const speedSeries = [];
-    for (let i = 4; i < taps.length; i++) {
-      speedSeries.push({ x: (taps[i].t - t0) / 1000, y: bpmFromInterval((taps[i].t - taps[i - 4].t) / 4) });
+    for (let i = SMOOTH; i < taps.length; i++) {
+      speedSeries.push({ x: (taps[i].t - t0) / 1000, y: bpmFromInterval((taps[i].t - taps[i - SMOOTH].t) / SMOOTH) });
     }
 
     return {
@@ -543,14 +548,23 @@
         taps.push(tap);
         const n = taps.length;
         const snap = { n, bpm: 0, spread: 0, peak, err: null, onTime: null, alert: null, breakdown: false };
-        if (n >= 5) snap.bpm = bpmFromInterval((tap.t - taps[n - 5].t) / 4);
+        if (n >= 5) {
+          // Average the last ~12 gaps, dropping the longest and shortest, so normal
+          // millisecond-level input noise (and one hesitation) doesn't make the number jump.
+          const k = Math.min(LIVE_WINDOW, n - 1);
+          const recentGaps = [];
+          for (let i = n - k; i < n; i++) recentGaps.push(taps[i].t - taps[i - 1].t);
+          const sorted = recentGaps.sort((a, b) => a - b);
+          snap.bpm = bpmFromInterval(mean(sorted.length >= 6 ? sorted.slice(1, -1) : sorted));
+        }
 
         if (opts.grid) {
           const { t0, period } = opts.grid;
           const idx = Math.round((tap.t - t0) / period);
           const err = tap.t - (t0 + idx * period);
-          snap.err = err;
           errs.push(err);
+          snap.err = err;
+          snap.errAvg = mean(errs.slice(-6)); // smoothed position for the early/late meter
           const recent = errs.slice(-W);
           const win = onTimeWindow(period);
           snap.onTime = recent.filter((e) => Math.abs(e) <= win).length / recent.length;
@@ -625,6 +639,7 @@
     createLiveMonitor,
     recommendedRestSec,
     onTimeWindow,
+    SMOOTH,
     worstLevel,
   };
 });

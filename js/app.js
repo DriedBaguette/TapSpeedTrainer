@@ -265,11 +265,16 @@
   }
 
   function updateLive(snap) {
-    $('#live-bpm').textContent = snap.bpm ? Math.round(snap.bpm) : '–';
+    // Redraw the big number at most ~6 times a second so it's readable.
+    const now = performance.now();
+    if (!snap.bpm || now - (S.bpmShownAt || 0) > 160) {
+      $('#live-bpm').textContent = snap.bpm ? Math.round(snap.bpm) : '–';
+      S.bpmShownAt = now;
+    }
     $('#live-taps').textContent = S.taps.length;
     if (S.grid) {
       $('#live-extra').textContent = snap.onTime != null ? `${Math.round(snap.onTime * 100)}%` : '–';
-      const pos = 50 + Math.max(-50, Math.min(50, (snap.err / S.grid.period) * 100));
+      const pos = 50 + Math.max(-50, Math.min(50, (snap.errAvg / S.grid.period) * 100));
       $('#err-dot').style.left = pos + '%';
     } else {
       $('#live-extra').textContent = snap.spread ? `${Math.round(snap.spread * 100)}%` : '–';
@@ -576,7 +581,7 @@
       html += issueList(res.issues);
       html += `<p class="recommend">Controlled practice speed: about <b>${res.recommendBpm} BPM</b> on the metronome.
         <button type="button" class="secondary" id="practise-at">Practise at ${res.recommendBpm}</button></p>`;
-      html += '<div class="chart"><h3>Speed through the set</h3><p class="sub">Rolling speed over 4 taps. A steady line is the goal.</p><div id="rep-a"></div></div>';
+      html += '<div class="chart"><h3>Speed through the set</h3><p class="sub">Rolling speed over 8 taps. A steady line is the goal.</p><div id="rep-a"></div></div>';
       html +=
         '<div class="chart"><h3>Gap before each tap</h3><p class="sub">' +
         (res.alternation ? 'If the two colours form separate bands, your fingers are uneven.' : 'A tight band means an even rhythm.') +
@@ -603,7 +608,7 @@
       }
       html +=
         '<div class="chart"><h3>Timing vs the click</h3><p class="sub">Each tap’s offset from its note. Above 0 = late, below = early. Shaded = on time.</p><div id="rep-a"></div></div>';
-      html += '<div class="chart"><h3>Speed through the set</h3><p class="sub">Rolling speed over 4 taps vs target.</p><div id="rep-b"></div></div>';
+      html += '<div class="chart"><h3>Speed through the set</h3><p class="sub">Rolling speed over 8 taps vs target.</p><div id="rep-b"></div></div>';
     }
 
     html += `<div class="feel"><p>How do your hands and wrists feel?</p><div class="actions">
