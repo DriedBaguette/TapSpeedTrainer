@@ -605,8 +605,8 @@
               snap.alert = {
                 level: 'stop',
                 text: slow
-                  ? 'Speed has collapsed. Stopping here so you don’t practise tense tapping.'
-                  : 'Rhythm has fallen apart. Stopping here so you don’t practise mashing.',
+                  ? `Speed has collapsed (${pct(1 - b / peak)}% below peak). Reps past this point train tense tapping.`
+                  : 'Rhythm has fallen apart. Reps past this point train mashing.',
               };
             }
           }

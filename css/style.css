@@ -208,7 +208,18 @@ body.mode-calibrate .not-calib { display: none; }
 .lvl-stop { border-color: var(--critical); color: var(--critical-ink); background: color-mix(in srgb, var(--critical) 10%, transparent); }
 .icon { flex: none; width: 18px; text-align: center; }
 
-.status-line { margin-top: 12px; color: var(--text-secondary); font-size: 14px; min-height: 21px; }
+.status-line { color: var(--text-secondary); font-size: 14px; }
+
+/* Status text and live warnings share one fixed-height slot (stacked in the same grid cell),
+   so a warning appearing mid-set never moves the pads. Room for 2 lines of warning, 3 on phones. */
+.msg-slot { --lines: 2; display: grid; align-items: start; margin-top: 12px; min-height: calc(var(--lines) * 21px + 24px); }
+.msg-slot > * { grid-area: 1 / 1; min-width: 0; }
+.msg-slot .alert { margin-top: 0; }
+.msg-slot .alert > span:last-child {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--lines); line-clamp: var(--lines); overflow: hidden;
+}
+.msg-slot:has(.alert:not([hidden])) .status-line { visibility: hidden; }
+@media (max-width: 520px) { .msg-slot { --lines: 3; } }
 
 .pads { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
 .pads.single { grid-template-columns: 1fr; }

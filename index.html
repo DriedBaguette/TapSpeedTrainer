@@ -117,8 +117,11 @@
           <div class="meter-track"><div class="meter-zone"></div><div class="meter-center"></div><div class="meter-dot" id="err-dot"></div></div>
           <span class="meter-label">late</span>
         </div>
-        <div id="live-alert" class="alert" hidden></div>
-        <div id="status-line" class="status-line">Press Start, then tap.</div>
+        <!-- Fixed-height slot: warnings replace the status text here instead of pushing the pads down. -->
+        <div class="msg-slot">
+          <div id="status-line" class="status-line">Press Start, then tap.</div>
+          <div id="live-alert" class="alert" hidden></div>
+        </div>
         <div class="pads" id="pads">
           <button type="button" class="pad" data-pad="0"><span class="pad-key">Z</span></button>
           <button type="button" class="pad" data-pad="1"><span class="pad-key">X</span></button>
