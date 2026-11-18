@@ -32,6 +32,8 @@
     earlyStart: false,
     lastSnap: null,
     listeningSlot: null,
+    painConfirmUntil: 0,
+    clearConfirmUntil: 0,
   };
 
   // ------------------------------------------------------------ utilities
@@ -283,7 +285,13 @@
 
   async function startSet() {
     if (isActive()) return;
-    if (painToday() && !confirm('You reported pain earlier today. Training through pain risks injury.\n\nStart anyway?')) return;
+    if (painToday() && Date.now() > S.painConfirmUntil) {
+      // Two-step confirm instead of a browser dialog.
+      S.painConfirmUntil = Date.now() + 6000;
+      setStatus('You reported pain earlier today. Training through pain risks injury. Press Start again within 6 seconds to train anyway.');
+      return;
+    }
+    S.painConfirmUntil = 0;
 
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     S.earlyStart = Date.now() < S.restUntil;
@@ -812,7 +820,20 @@
       '</tbody>';
   }
 
+  // Where file downloads are blocked (e.g. an embedded page), copy the data instead.
+  const copyOnly = document.body.dataset.embedded === 'true';
+  if (copyOnly) $('#export').textContent = 'Copy data';
   $('#export').addEventListener('click', () => {
+    if (copyOnly) {
+      const done = () => ($('#data-msg').textContent = 'Data copied. Paste it into a .json file to keep a backup.');
+      const fail = () => ($('#data-msg').textContent = 'Copying was blocked by the browser.');
+      try {
+        navigator.clipboard.writeText(Store.exportJSON()).then(done, fail);
+      } catch (e) {
+        fail();
+      }
+      return;
+    }
     const blob = new Blob([Store.exportJSON()], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -825,19 +846,27 @@
     if (!file) return;
     try {
       const n = Store.importJSON(await file.text());
-      alert(`Imported ${n} sets.`);
+      $('#data-msg').textContent = `Imported ${n} sets.`;
       renderHistory();
     } catch (err) {
-      alert('Could not import: ' + err.message);
+      $('#data-msg').textContent = 'Could not import: ' + err.message;
     }
     e.target.value = '';
   });
   $('#clear').addEventListener('click', () => {
-    if (confirm('Delete all saved sets? This can’t be undone.')) {
-      Store.clearSets();
-      renderHistory();
-      updateDayBanner();
+    const btn = $('#clear');
+    if (Date.now() > S.clearConfirmUntil) {
+      S.clearConfirmUntil = Date.now() + 5000;
+      btn.textContent = 'Click again to delete everything';
+      setTimeout(() => (btn.textContent = 'Clear history'), 5000);
+      return;
     }
+    S.clearConfirmUntil = 0;
+    btn.textContent = 'Clear history';
+    $('#data-msg').textContent = 'History cleared.';
+    Store.clearSets();
+    renderHistory();
+    updateDayBanner();
   });
 
   // ----------------------------------------------------------------- tabs
