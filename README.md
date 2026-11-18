@@ -26,6 +26,17 @@ No install, no build step, no account. Open `index.html` in a browser. Your data
   until you recalibrate, and it prompts you to recalibrate when you hit the top of your zone or the calibration is
   two weeks old.
 
+### Game layer (metronome and guided sets)
+
+- **Note track**: notes scroll toward a hit line and arrive exactly on the click. With two-finger alternation
+  there are two lanes (top = first key, bottom = second) so you can see which finger is next.
+- **Hit ratings**: Perfect / Great / Good / Miss on every note, with an early/late hint.
+- **Combo and score**: the score multiplier grows with your combo (up to 2×).
+- **Grade** at the end (S needs 95% accuracy with no misses, then A/B/C/D), plus a **Full combo** badge.
+- **Records only count clean play**: best accuracy at a BPM, highest BPM cleared with an A or better, and for
+  speed tests a new fastest average only if the set's form was clean.
+- **Day streak** in the header and History.
+
 Speeds are BPM in 1/4 notes (rhythm-game convention): `BPM = taps per second × 15`.
 
 ## What it monitors

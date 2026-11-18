@@ -9,7 +9,7 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>Tap Speed Trainer</h1>
+    <div class="brand"><h1>Tap Speed Trainer</h1><span class="streak" id="streak" hidden></span></div>
     <nav class="tabs" role="tablist">
       <button role="tab" class="tab" data-view="train" aria-selected="true">Train</button>
       <button role="tab" class="tab" data-view="history" aria-selected="false">History</button>
@@ -111,15 +111,12 @@
       <div class="card live" aria-live="polite">
         <div class="live-stats">
           <div class="stat big"><span class="value" id="live-bpm">–</span><span class="unit">BPM</span></div>
-          <div class="stat"><span class="value" id="live-taps">0</span><span class="unit">taps</span></div>
+          <div class="stat"><span class="value" id="live-taps">0</span><span class="unit" id="live-taps-label">taps</span></div>
           <div class="stat"><span class="value" id="live-time">0.0</span><span class="unit">sec</span></div>
           <div class="stat"><span class="value" id="live-extra">–</span><span class="unit" id="live-extra-label">evenness</span></div>
         </div>
-        <div class="meter" id="err-meter" hidden aria-hidden="true">
-          <span class="meter-label">early</span>
-          <div class="meter-track"><div class="meter-zone"></div><div class="meter-center"></div><div class="meter-dot" id="err-dot"></div></div>
-          <span class="meter-label">late</span>
-        </div>
+        <!-- Note track: notes reach the line on the left exactly when their click sounds. -->
+        <div class="highway-wrap tempo-only"><canvas id="highway" aria-hidden="true"></canvas></div>
         <!-- Fixed-height slot: warnings replace the status text here instead of pushing the pads down. -->
         <div class="msg-slot">
           <div id="status-line" class="status-line">Press Start, then tap.</div>
@@ -128,7 +125,6 @@
         <div class="pads" id="pads">
           <button type="button" class="pad" data-pad="0"><span class="pad-key">Z</span></button>
           <button type="button" class="pad" data-pad="1"><span class="pad-key">X</span></button>
-          <div class="beat" id="beat" aria-hidden="true"></div>
         </div>
         <div class="actions">
           <button type="button" id="start" class="primary">Start</button>
@@ -220,6 +216,7 @@
   <script src="js/analysis.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/charts.js"></script>
+  <script src="js/highway.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

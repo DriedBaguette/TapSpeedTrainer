@@ -742,6 +742,132 @@
     };
   }
 
+  // ------------------------------------------------------------ game layer
+
+  const JUDGE_POINTS = { perfect: 1, great: 0.7, good: 0.4, miss: 0 };
+  const JUDGE_SCORE = { perfect: 10, great: 7, good: 4 };
+
+  /** Timing windows (ms either side of the note) for each hit rating. */
+  function judgeWindows(period) {
+    const w = onTimeWindow(period);
+    return { perfect: w / 2, great: w, good: period / 2 };
+  }
+
+  function gradeFor(accuracy, faults) {
+    if (accuracy >= 0.95 && faults === 0) return 'S';
+    if (accuracy >= 0.9) return 'A';
+    if (accuracy >= 0.8) return 'B';
+    if (accuracy >= 0.7) return 'C';
+    return 'D';
+  }
+
+  /**
+   * Rates each tap against the note chart (one note every `period` ms from t0)
+   * and keeps combo and score. Timing only: either key can hit any note.
+   */
+  function createJudge(grid) {
+    const { t0, period, count } = grid;
+    const win = judgeWindows(period);
+    const GRACE = 50; // ms after a note's window closes before it counts as missed (input lag)
+    const marks = new Array(count).fill(null);
+    let swept = 0;
+    let combo = 0;
+    let maxCombo = 0;
+    let score = 0;
+    let extras = 0;
+    const pendingMisses = []; // misses found by hit(), reported on the next sweep
+
+    function rate(absErr) {
+      return absErr <= win.perfect ? 'perfect' : absErr <= win.great ? 'great' : 'good';
+    }
+
+    return {
+      windows: win,
+      hit(t) {
+        const idx = Math.round((t - t0) / period);
+        if (idx < 0 || idx >= count) return null; // outside the chart (count-in, after the end)
+        const err = t - (t0 + idx * period);
+        // A tap for a later note means every earlier unhit note was skipped: miss them first,
+        // so the combo breaks before this hit counts (the timed sweep may not have run yet).
+        while (swept < idx) {
+          if (!marks[swept]) {
+            marks[swept] = 'miss';
+            combo = 0;
+            pendingMisses.push(swept);
+          }
+          swept++;
+        }
+        if (marks[idx] && marks[idx] !== 'miss') {
+          extras++;
+          combo = 0;
+          return { judgment: 'extra', idx, err, combo };
+        }
+        const judgment = rate(Math.abs(err));
+        marks[idx] = judgment; // also rescues a note marked missed just before a late-arriving event
+        combo++;
+        maxCombo = Math.max(maxCombo, combo);
+        score += Math.round(JUDGE_SCORE[judgment] * (1 + Math.min(combo, 100) / 100));
+        return { judgment, idx, err, combo };
+      },
+      /** Mark notes whose window has passed without a hit. Returns their indexes. */
+      sweep(now) {
+        const missed = pendingMisses.splice(0);
+        while (swept < count && now > t0 + swept * period + period / 2 + GRACE) {
+          if (!marks[swept]) {
+            marks[swept] = 'miss';
+            combo = 0;
+            missed.push(swept);
+          }
+          swept++;
+        }
+        return missed;
+      },
+      mark(i) {
+        return marks[i];
+      },
+      get combo() {
+        return combo;
+      },
+      get score() {
+        return score;
+      },
+      /** Final tally over the first `played` notes (all of them unless the set was stopped early). */
+      summary(played = count) {
+        const n = Math.max(1, Math.min(played, count));
+        const c = { perfect: 0, great: 0, good: 0, miss: 0 };
+        let pts = 0;
+        for (let i = 0; i < n; i++) {
+          const j = marks[i] || 'miss';
+          c[j]++;
+          pts += JUDGE_POINTS[j];
+        }
+        const accuracy = pts / n;
+        return {
+          ...c,
+          extra: extras,
+          notes: n,
+          accuracy,
+          score,
+          maxCombo,
+          fullCombo: c.miss === 0 && extras === 0,
+          grade: gradeFor(accuracy, c.miss + extras),
+        };
+      },
+    };
+  }
+
+  /** Consecutive training days ending today (or yesterday, so a streak survives until you train today). */
+  function dayStreak(dayKeys, todayKey, yesterdayOf) {
+    const days = new Set(dayKeys);
+    let d = days.has(todayKey) ? todayKey : yesterdayOf(todayKey);
+    let n = 0;
+    while (days.has(d)) {
+      n++;
+      d = yesterdayOf(d);
+    }
+    return n;
+  }
+
   // ------------------------------------------------------- guided training
 
   /**
@@ -841,6 +967,10 @@
     analyzeMetronome,
     analyzeCalibration,
     planGuidedSession,
+    createJudge,
+    judgeWindows,
+    gradeFor,
+    dayStreak,
     guidedAfterSet,
     guidedAfterFeel,
     createLiveMonitor,

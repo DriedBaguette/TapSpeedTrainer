@@ -286,3 +286,88 @@ test('guided feel check: tight drops 10, pain ends the session', () => {
   assert.equal(A.guidedAfterFeel(st, 'pain').endNow, true);
   assert.equal(A.guidedAfterFeel(st, 'fine'), st);
 });
+
+// --------------------------------------------------------------- game layer
+
+test('judge rates taps by timing and builds combo', () => {
+  const grid = { t0: 1000, period: 100, count: 10 }; // windows: perfect 15, great 30, good 50
+  const j = A.createJudge(grid);
+  assert.equal(j.hit(1000).judgment, 'perfect');
+  assert.equal(j.hit(1110).judgment, 'perfect');
+  assert.equal(j.hit(1225).judgment, 'great');
+  assert.equal(j.hit(1340).judgment, 'good');
+  assert.equal(j.combo, 4);
+  assert.equal(j.score > 0, true);
+});
+
+test('judge: extra tap on an already-hit note breaks combo; skipped notes become misses', () => {
+  const j = A.createJudge({ t0: 0, period: 100, count: 6 });
+  j.hit(0);
+  j.hit(100);
+  assert.equal(j.hit(105).judgment, 'extra');
+  assert.equal(j.combo, 0);
+  j.hit(200);
+  // note 3 never hit
+  assert.deepEqual(j.sweep(450), [3]);
+  assert.equal(j.mark(3), 'miss');
+  j.hit(400);
+  j.hit(500);
+  const s = j.summary();
+  assert.equal(s.miss, 1);
+  assert.equal(s.extra, 1);
+  assert.equal(s.fullCombo, false);
+  assert.equal(s.maxCombo, 2); // 0,100 then extra resets; 200; miss; 400,500
+});
+
+test('judge: a late-arriving tap rescues a note just swept as missed', () => {
+  const j = A.createJudge({ t0: 0, period: 100, count: 4 });
+  j.sweep(95); // note 0's window (+50 ms) has closed, but it's still within the 50 ms grace
+  assert.equal(j.mark(0), null);
+  j.sweep(120);
+  assert.equal(j.mark(0), 'miss');
+  assert.equal(j.hit(10).judgment, 'perfect');
+  assert.equal(j.mark(0), 'perfect');
+});
+
+test('judge ignores taps outside the chart', () => {
+  const j = A.createJudge({ t0: 1000, period: 100, count: 4 });
+  assert.equal(j.hit(500), null);
+  assert.equal(j.hit(1500), null);
+});
+
+test('grades: S needs 95% and no misses, then A/B/C/D by accuracy', () => {
+  const perfectRun = A.createJudge({ t0: 0, period: 100, count: 20 });
+  for (let i = 0; i < 20; i++) perfectRun.hit(i * 100);
+  const s = perfectRun.summary();
+  assert.equal(s.grade, 'S');
+  assert.ok(s.fullCombo);
+  assert.equal(A.gradeFor(0.97, 1), 'A');
+  assert.equal(A.gradeFor(0.85, 0), 'B');
+  assert.equal(A.gradeFor(0.72, 0), 'C');
+  assert.equal(A.gradeFor(0.5, 0), 'D');
+});
+
+test('summary over a stopped-early set only counts played notes', () => {
+  const j = A.createJudge({ t0: 0, period: 100, count: 100 });
+  for (let i = 0; i < 10; i++) j.hit(i * 100);
+  assert.equal(j.summary(10).accuracy, 1);
+});
+
+test('day streak counts consecutive days, surviving until you train today', () => {
+  const prev = (k) => {
+    const d = new Date(k + 'T12:00:00');
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  };
+  assert.equal(A.dayStreak(['2026-11-16', '2026-11-17', '2026-11-18'], '2026-11-18', prev), 3);
+  assert.equal(A.dayStreak(['2026-11-16', '2026-11-17'], '2026-11-18', prev), 2);
+  assert.equal(A.dayStreak(['2026-11-15'], '2026-11-18', prev), 0);
+});
+
+test('judge: skipping a note breaks the combo before the next hit counts', () => {
+  const j = A.createJudge({ t0: 0, period: 100, count: 30 });
+  for (let i = 0; i < 30; i++) if (i % 6 !== 5) j.hit(i * 100); // no sweep in between
+  assert.equal(j.summary().maxCombo, 5);
+  assert.equal(j.summary().miss, 5);
+  assert.equal(j.sweep(3200).length, 5); // the skipped notes are still reported for the track
+});

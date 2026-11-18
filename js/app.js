@@ -25,7 +25,8 @@
     startT: 0,
     grid: null,
     beats: [],
-    beatIdx: 0,
+    judge: null, // hit ratings, combo and score for metronome/guided sets
+    fx: [], // recent hit/miss effects for the note track
     raf: 0,
     audio: null,
     restUntil: 0,
@@ -104,6 +105,8 @@
     $('#pads').classList.toggle('single', settings.style === 'single');
     for (const m of ['free', 'metronome', 'calibrate', 'guided']) document.body.classList.toggle(`mode-${m}`, settings.mode === m);
     $('#live-extra-label').textContent = usesMetronome() ? 'on time' : 'variation';
+    $('#live-taps-label').textContent = usesMetronome() ? 'combo' : 'taps';
+    if (!isActive()) drawTrack();
     if (!isActive()) $('#live-time').textContent = !usesMetronome() && freeLimit().ms ? (freeLimit().ms / 1000).toFixed(1) : '0.0';
     renderGuided();
     const c = settings.calibration;
@@ -213,6 +216,7 @@
   function setPadDown(pad, delta) {
     S.padDown[pad] = Math.max(0, S.padDown[pad] + delta);
     $(`.pad[data-pad="${pad}"]`).classList.toggle('down', S.padDown[pad] > 0);
+    if (!isActive() || !S.grid) drawTrack();
   }
 
   function isActive() {
@@ -241,6 +245,10 @@
     const tap = { t, key: pad, dur: null };
     entry.tap = tap;
     S.taps.push(tap);
+    if (S.judge) {
+      const r = S.judge.hit(t);
+      if (r) S.fx.push({ at: t, idx: r.idx, judgment: r.judgment, err: r.err });
+    }
     const snap = S.monitor.push(tap);
     S.lastSnap = snap;
     updateLive(snap);
@@ -281,7 +289,6 @@
     $('#live-time').textContent = !usesMetronome() && freeLimit().ms ? (freeLimit().ms / 1000).toFixed(1) : '0.0';
     $('#live-extra').textContent = '–';
     showAlert($('#live-alert'), null);
-    $('#err-dot').style.left = '50%';
   }
 
   function updateLive(snap) {
@@ -291,11 +298,9 @@
       $('#live-bpm').textContent = snap.bpm ? Math.round(snap.bpm) : '–';
       S.bpmShownAt = now;
     }
-    $('#live-taps').textContent = S.taps.length;
+    $('#live-taps').textContent = S.judge ? S.judge.combo : S.taps.length;
     if (S.grid) {
       $('#live-extra').textContent = snap.onTime != null ? `${Math.round(snap.onTime * 100)}%` : '–';
-      const pos = 50 + Math.max(-50, Math.min(50, (snap.errAvg / S.grid.period) * 100));
-      $('#err-dot').style.left = pos + '%';
     } else {
       $('#live-extra').textContent = snap.spread ? `${Math.round(snap.spread * 100)}%` : '–';
     }
@@ -504,7 +509,8 @@
     document.body.classList.add('running');
     $('#start').hidden = true;
     $('#stop').hidden = false;
-    $('#err-meter').hidden = !usesMetronome();
+    S.judge = null;
+    S.fx = [];
 
     if (settings.mode === 'calibrate') {
       S.phase = 'armed';
@@ -569,9 +575,13 @@
           setStatus('Go!');
         }
         $('#live-time').textContent = (Math.max(0, Math.min(end - t0, end - now)) / 1000).toFixed(1);
-        while (S.beatIdx < S.beats.length && S.beats[S.beatIdx] < now - 80) S.beatIdx++;
-        const b = S.beats[S.beatIdx];
-        $('#beat').classList.toggle('on', b != null && now >= b && now < b + 80);
+        const missed = S.judge.sweep(now);
+        if (missed.length) {
+          for (const idx of missed) S.fx.push({ at: now, idx, judgment: 'miss' });
+          $('#live-taps').textContent = S.judge.combo;
+        }
+        if (S.fx.length > 40) S.fx = S.fx.filter((f) => now - f.at < 600);
+        drawTrack(now);
         if (now > end + period + 150) return finish('time');
       }
     }
@@ -636,23 +646,33 @@
     const off = audioToPerfOffset(ctx) + settings.metroOffset;
     const toPerf = (c) => c * 1000 + off;
     S.grid = { t0: toPerf(firstNote), period: periodS * 1000, count, targetBpm: bpm, sub };
-    S.beats = [];
+    S.beats = []; // count-in beats, drawn on the note track
     for (let b = 0; b < countIn; b++) S.beats.push(toPerf(startC + b * beatS));
-    for (let i = 0; i < count; i += sub) S.beats.push(toPerf(firstNote + i * periodS));
-    S.beatIdx = 0;
     S.monitor = A.createLiveMonitor({ grid: S.grid });
-
-    const zone = (A.onTimeWindow(S.grid.period) / S.grid.period) * 100;
-    $('.meter-zone').style.left = 50 - zone + '%';
-    $('.meter-zone').style.right = 50 - zone + '%';
+    S.judge = A.createJudge(S.grid);
   }
+
+  function drawTrack(now) {
+    if (!usesMetronome()) return;
+    TapHighway.draw($('#highway'), {
+      now: now || performance.now(),
+      grid: isActive() || S.phase === 'done' ? S.grid : null,
+      judge: S.judge,
+      lanes: settings.style === 'alternate' ? 2 : 1,
+      countIn: S.beats,
+      fx: S.fx,
+      held: [S.padDown[0] > 0, S.padDown[1] > 0],
+    });
+  }
+  window.addEventListener('resize', () => {
+    if (!isActive()) drawTrack();
+  });
 
   function stopAudio() {
     if (S.audio && S.audio.out) {
       S.audio.out.disconnect();
       S.audio.out = null;
     }
-    $('#beat').classList.remove('on');
   }
 
   // --------------------------------------------------------------- finish
@@ -664,7 +684,6 @@
     document.body.classList.remove('running');
     $('#start').hidden = false;
     $('#stop').hidden = true;
-    $('#err-meter').hidden = true;
     showAlert($('#live-alert'), null);
   }
 
@@ -704,6 +723,7 @@
         grid = { ...grid, count: Math.max(1, Math.min(grid.count, played)) };
       }
       res = A.analyzeMetronome(S.taps, grid, opts);
+      if (res.ok && S.judge) res.game = S.judge.summary(grid.count);
     }
 
     if (!res.ok) {
@@ -734,6 +754,7 @@
           'so keep sets here short and occasional, or recalibrate if you’ve got faster.',
       });
     }
+    addRecords(res);
     if (S.earlyStart) {
       res.issues.push({
         level: 'info',
@@ -769,6 +790,15 @@
         meanErr: +res.meanErr.toFixed(1),
       });
       if (S.guidedStep) Object.assign(record, { guided: true, guidedStep: S.guidedStep.kind });
+      if (res.game) {
+        Object.assign(record, {
+          grade: res.game.grade,
+          score: res.game.score,
+          accuracy: +res.game.accuracy.toFixed(3),
+          maxCombo: res.game.maxCombo,
+          fullCombo: res.game.fullCombo,
+        });
+      }
     }
     Store.addSet(record);
     if (S.guidedStep) res.guidedMsg = advanceGuided(reason, res);
@@ -778,6 +808,32 @@
     setStatus(REASONS[reason]);
     renderReport(res, record, reason, restSec);
     updateDayBanner();
+  }
+
+  /** Personal records. Only clean play counts, so mashing never sets a record. */
+  function addRecords(res) {
+    const clean = (lvl) => lvl === 'good' || lvl === 'info';
+    if (res.mode === 'free') {
+      const prev = Store.sets.filter((x) => x.mode === 'free' && x.style === settings.style);
+      const best = Math.max(0, ...prev.filter((x) => clean(x.level)).map((x) => x.avgBpm));
+      if (!prev.length || res.avgBpm <= best) return;
+      if (clean(res.level)) res.newBest = { bpm: res.avgBpm, prev: best };
+      else
+        res.issues.push({
+          level: 'info',
+          title: 'Fastest yet, but not a record',
+          detail: 'Records only count when your form is clean. Hit this speed with an even rhythm to claim it.',
+        });
+      return;
+    }
+    if (!res.game) return;
+    const prev = Store.sets.filter((x) => x.mode === 'metronome' && x.grade && x.subdiv === S.grid.sub);
+    if (!prev.length) return;
+    const sameBpm = prev.filter((x) => x.targetBpm === res.targetBpm);
+    if (sameBpm.length && res.game.accuracy > Math.max(...sameBpm.map((x) => x.accuracy))) res.game.newBestAcc = true;
+    const passed = (g) => g === 'S' || g === 'A';
+    const top = Math.max(0, ...prev.filter((x) => passed(x.grade)).map((x) => x.targetBpm));
+    if (passed(res.game.grade) && res.targetBpm > top) res.game.newTopBpm = true;
   }
 
   function cancelCalibration(msg) {
@@ -906,6 +962,8 @@
         tile(`${Math.round(res.consistency * 100)}%`, 'spacing variation') +
         (cal ? tile(`${Math.round((res.avgBpm / cal.maxBpm) * 100)}%`, 'of calibrated max') : tile(res.n, 'taps')) +
         '</div>';
+      if (res.newBest)
+        html += `<div class="badges"><span class="badge">New personal best: ${Math.round(res.newBest.bpm)} BPM average${res.newBest.prev ? ` (was ${Math.round(res.newBest.prev)})` : ''}</span></div>`;
       html += issueList(res.issues);
       html += `<p class="recommend">Controlled practice speed: about <b>${res.recommendBpm} BPM</b> on the metronome.
         <button type="button" class="secondary" id="practise-at">Practise at ${res.recommendBpm}</button></p>`;
@@ -916,6 +974,20 @@
         '</p><div id="rep-b"></div></div>';
     } else {
       const sign = res.meanErr > 0 ? '+' : '';
+      const g = res.game;
+      if (g) {
+        const badges = [];
+        if (g.fullCombo) badges.push('Full combo');
+        if (g.newTopBpm) badges.push(`New highest BPM cleared: ${res.targetBpm}`);
+        if (g.newBestAcc) badges.push(`Best accuracy yet at ${res.targetBpm} BPM`);
+        html +=
+          `<div class="game-row"><div class="grade grade-${g.grade}" aria-label="Grade ${g.grade}">${g.grade}</div><div class="game-stats">` +
+          `<div class="score">${g.score.toLocaleString()} pts</div>` +
+          `<div class="line">${Math.round(g.accuracy * 100)}% accuracy · max combo ${g.maxCombo}</div>` +
+          `<div class="line">Perfect ${g.perfect} · Great ${g.great} · Good ${g.good} · Miss ${g.miss}${g.extra ? ` · Extra ${g.extra}` : ''}</div>` +
+          (badges.length ? `<div class="badges">${badges.map((b) => `<span class="badge">${esc(b)}</span>`).join('')}</div>` : '') +
+          '</div></div>';
+      }
       html +=
         '<div class="tiles">' +
         tile(res.targetBpm, 'target BPM') +
@@ -1077,6 +1149,7 @@
   setInterval(updateRestButton, 250);
 
   function updateDayBanner() {
+    updateStreak();
     const today = Store.today();
     const el = $('#day-banner');
     if (today.some((s) => s.feel === 'pain')) {
@@ -1105,6 +1178,24 @@
   $('#start').addEventListener('click', startSet);
   $('#stop').addEventListener('click', () => finish('manual'));
 
+  // --------------------------------------------------------------- streak
+
+  function streakDays() {
+    const prevDay = (k) => {
+      const d = new Date(k + 'T12:00:00');
+      d.setDate(d.getDate() - 1);
+      return Store.dayKey(d);
+    };
+    return A.dayStreak(Store.sets.map((x) => Store.dayKey(x.time)), Store.dayKey(Date.now()), prevDay);
+  }
+
+  function updateStreak() {
+    const n = streakDays();
+    const el = $('#streak');
+    el.hidden = n < 2;
+    el.textContent = `${n}-day streak`;
+  }
+
   // -------------------------------------------------------------- history
 
   function renderHistory() {
@@ -1116,7 +1207,8 @@
       tile(today.length, 'sets') +
       tile(mins.toFixed(1), 'minutes tapping') +
       tile(freeToday.length ? Math.round(Math.max(...freeToday.map((s) => s.avgBpm))) : '–', 'best speed test (avg BPM)') +
-      tile(today.filter((s) => s.level === 'good' || s.level === 'info').length, 'clean sets');
+      tile(today.filter((s) => s.level === 'good' || s.level === 'info').length, 'clean sets') +
+      tile(streakDays(), 'day streak');
 
     const date = (s) => new Date(s.time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     const free = sets.filter((s) => s.mode === 'free');
@@ -1182,7 +1274,7 @@
                   ? `${Math.round(s.avgBpm)} avg · ${Math.round(s.peakBpm)} peak · ${Math.round(s.consistency * 100)}% var.`
                   : s.mode === 'calibration'
                     ? `relaxed ${Math.round(s.relaxedBpm)} · max ${Math.round(s.maxBpm)} · zone ${s.zoneLow}–${s.zoneHigh}`
-                    : `${s.targetBpm} BPM · ${Math.round(s.onTimePct * 100)}% on time · UR ${Math.round(s.unstableRate)}`;
+                    : `${s.grade ? `${s.grade} · ` : ''}${s.targetBpm} BPM · ${Math.round(s.onTimePct * 100)}% on time · UR ${Math.round(s.unstableRate)}`;
               const form = s.issues && s.issues.length ? s.issues.join('; ') : 'clean';
               return `<tr><td>${esc(date(s))}</td><td>${s.guided ? 'Guided' : { free: 'Speed test', metronome: 'Metronome', calibration: 'Calibration' }[s.mode] || s.mode}</td><td>${esc(result)}</td>` +
                 `<td>${ICON[s.level] || ''} ${esc(form)}</td><td>${esc(FEEL_LABEL[s.feel] || '–')}</td></tr>`;
