@@ -20,6 +20,9 @@
   const ICON = { good: '✓', info: 'i', warn: '!', stop: '■' };
 
   const CALIB = { relaxedMs: 15000, breakMs: 15000, maxMs: 10000 };
+  // Bump on every release, together with the ?v= on the CSS/JS links in index.html (a test checks they match),
+  // so phones fetch the new files instead of a cached copy.
+  const APP_VERSION = '4';
   const SESSION_VERSION = 2;
   const SKIP_CALIBRATION_DAYS = 7; // a calibration this recent can be reused instead of redone
 
@@ -661,6 +664,12 @@
   async function startMetronome({ bpm, sub, lengthSec }) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) throw new Error('this browser has no Web Audio support');
+    // iPhone: let the metronome play even when the ringer switch is on silent (Safari 17+).
+    try {
+      if (navigator.audioSession) navigator.audioSession.type = 'playback';
+    } catch (e) {
+      /* not supported */
+    }
     if (!S.audio) S.audio = { ctx: new AC({ latencyHint: 'interactive' }), out: null };
     const ctx = S.audio.ctx;
     if (ctx.state !== 'running') await ctx.resume(); // also wakes a context paused in the background
@@ -1296,6 +1305,7 @@
 
   // ------------------------------------------------------------------ go
 
+  $('#app-version').textContent = APP_VERSION;
   applySettingsToUI();
   resetLive();
   updateDayBanner();

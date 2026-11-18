@@ -379,3 +379,16 @@ test('judge: skipping a note breaks the combo before the next hit counts', () =>
   assert.equal(j.summary().miss, 5);
   assert.equal(j.sweep(3200).length, 5); // the skipped notes are still reported for the track
 });
+
+// ------------------------------------------------------------------ release
+
+test('every CSS/JS link in index.html carries the current app version (cache-busting)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
+  const version = app.match(/const APP_VERSION = '([^']+)'/)[1];
+  const links = [...html.matchAll(/(?:href|src)="((?:css|js)\/[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(links.length >= 6);
+  for (const l of links) assert.ok(l.endsWith(`?v=${version}`), `${l} should end with ?v=${version}`);
+});
