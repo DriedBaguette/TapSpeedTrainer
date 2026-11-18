@@ -193,3 +193,42 @@ test('live BPM stays steady under normal input noise', () => {
   }
   assert.ok(Math.min(...shown) > 175 && Math.max(...shown) < 185, `${Math.min(...shown)}–${Math.max(...shown)}`);
 });
+
+// ------------------------------------------------------------- calibration
+
+test('calibration sets zones between relaxed and max', () => {
+  const relaxed = tapsFrom(steady(90, 120, 3, 2)); // 125 BPM
+  const max = tapsFrom(steady(120, 80, 3, 3)); // 187.5 BPM
+  const res = A.analyzeCalibration(relaxed, max, opts);
+  assert.ok(res.ok);
+  assert.ok(Math.abs(res.relaxedBpm - 125) < 2);
+  assert.ok(Math.abs(res.maxBpm - 187.5) < 2);
+  assert.equal(res.zone.low, 150);
+  assert.equal(res.zone.high, 170);
+  assert.ok(res.recommendBpm >= 150 && res.recommendBpm <= 170);
+  assert.match(titles(res), /Big gap/);
+});
+
+test('calibration flags form falling apart at max', () => {
+  const relaxed = tapsFrom(steady(90, 110, 3, 4));
+  const max = tapsFrom(steady(120, 75, 30, 5));
+  const res = A.analyzeCalibration(relaxed, max, opts);
+  assert.match(titles(res), /Form falls apart/);
+});
+
+test('calibration flags pressing harder at speed', () => {
+  const relaxed = tapsFrom(steady(90, 110, 2, 6), { dur: () => 40 });
+  const max = tapsFrom(steady(120, 80, 2, 7), { dur: () => 60 });
+  const res = A.analyzeCalibration(relaxed, max, opts);
+  assert.match(titles(res), /Pressing harder when going fast/);
+});
+
+test('calibration notices a relaxed step that was actually faster', () => {
+  const res = A.analyzeCalibration(tapsFrom(steady(90, 80, 2, 8)), tapsFrom(steady(90, 100, 2, 9)), opts);
+  assert.match(titles(res), /faster than max/);
+});
+
+test('calibration rejects a step with too few taps', () => {
+  const res = A.analyzeCalibration(tapsFrom(steady(5, 100)), tapsFrom(steady(90, 80)), opts);
+  assert.equal(res.ok, false);
+});

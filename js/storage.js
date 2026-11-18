@@ -22,6 +22,7 @@
     metroOffset: 0,
     metroTicks: false,
     autostop: true,
+    calibration: null, // latest { time, relaxedBpm, maxBpm, relaxedCv, zoneLow, zoneHigh, recommendBpm }
   };
 
   let memory = { settings: { ...DEFAULT_SETTINGS }, sets: [] };

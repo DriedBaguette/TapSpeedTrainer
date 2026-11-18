@@ -13,6 +13,12 @@ No install, no build step, no account. Open `index.html` in a browser. Your data
 - **Metronome.** Tap along to a click at a target BPM (1/4, 1/2 or 1/1 notes) with a one-bar count-in.
   Scores how many taps land on time, your unstable rate, and drift. Moves you up 5 BPM only once a set is clean.
 
+- **Calibrate.** Two steps: 15 s at a relaxed pace, a 15 s break, then 10 s all-out. Gives you a warm-up pace,
+  a **training zone** (about 80–90% of max, never below your relaxed pace) and a metronome starting BPM. It also
+  compares the two steps to show where your form breaks down: messier rhythm, heavier presses, or one finger falling
+  behind at speed. History tracks relaxed vs max over time; a shrinking gap means your speed is coming from relaxed
+  motion rather than force.
+
 Speeds are BPM in 1/4 notes (rhythm-game convention): `BPM = taps per second × 15`.
 
 ## What it monitors

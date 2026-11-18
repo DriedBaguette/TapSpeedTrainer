@@ -616,6 +616,132 @@
     };
   }
 
+  // ----------------------------------------------------------- calibration
+
+  /**
+   * Two-step calibration: a relaxed set, then an all-out set.
+   * Compares the two to set training zones and spot where form breaks down.
+   * opts: { alternate, keyNames }
+   */
+  function analyzeCalibration(relaxedTaps, maxTaps, opts = {}) {
+    const relaxed = analyzeFree(relaxedTaps, opts);
+    const max = analyzeFree(maxTaps, opts);
+    if (!relaxed.ok) return { ok: false, reason: 'Relaxed step: ' + relaxed.reason };
+    if (!max.ok) return { ok: false, reason: 'Max step: ' + max.reason };
+
+    const relaxedBpm = relaxed.steadyBpm;
+    const maxBpm = max.avgBpm;
+    const ratio = relaxedBpm / maxBpm;
+    const issues = [];
+
+    if (ratio > 1.02) {
+      issues.push({
+        level: 'warn',
+        title: 'Relaxed step was faster than max',
+        detail: 'The max step should be your fastest. Run the calibration again and go all-out in step 2.',
+      });
+    } else if (ratio > 0.92) {
+      issues.push({
+        level: 'info',
+        title: 'Relaxed pace was close to your max',
+        detail:
+          `Relaxed was ${pct(ratio)}% of max. Either step 1 wasn’t really easy, or you’re near your ceiling. ` +
+          'Step 1 should feel like you could keep going for a minute without strain.',
+      });
+    } else if (ratio < 0.7) {
+      issues.push({
+        level: 'info',
+        title: `Big gap between relaxed and max (${pct(ratio)}%)`,
+        detail:
+          'Your top speed relies on force more than relaxed motion. Practising between the two, staying loose, ' +
+          'raises the relaxed speed. That gain is the one that lasts.',
+      });
+    }
+
+    if (relaxed.consistency > 0.12) {
+      issues.push({
+        level: 'info',
+        title: 'Uneven even when relaxed',
+        detail:
+          `Your relaxed taps vary by ${pct(relaxed.consistency)}%. Clean up evenness at slow speeds first. ` +
+          'Speed built on an uneven base stays uneven.',
+      });
+    }
+
+    const cvGrowth = relaxed.consistency > 0 ? max.consistency / relaxed.consistency : 1;
+    if (max.consistency > 0.15 && cvGrowth > 2) {
+      issues.push({
+        level: 'warn',
+        title: 'Form falls apart at full speed',
+        detail:
+          `Your rhythm is ${cvGrowth.toFixed(1)}× messier at max (${pct(max.consistency)}% vs ${pct(relaxed.consistency)}%). ` +
+          'The top of your range is mashing, so don’t train there. Use the training zone below.',
+      });
+    }
+
+    if (relaxed.press && max.press && max.press.duty > 0.6 && max.press.duty > relaxed.press.duty * 1.3) {
+      issues.push({
+        level: 'warn',
+        title: 'Pressing harder when going fast',
+        detail:
+          `Keys stay down ${pct(max.press.duty)}% of each gap at max vs ${pct(relaxed.press.duty)}% relaxed. ` +
+          'You’re forcing speed with tension. Aim to stay as light as in the relaxed step.',
+      });
+    }
+
+    const altR = relaxed.alternation;
+    const altM = max.alternation;
+    if (altR && altM && altM.imbalance > 0.12 && altR.imbalance <= 0.08) {
+      const names = opts.keyNames || ['key 1', 'key 2'];
+      issues.push({
+        level: 'info',
+        title: 'Uneven fingers only at speed',
+        detail:
+          `Both fingers match when relaxed, but at max “${names[altM.laggingKey]}” falls behind (${pct(altM.imbalance)}% uneven). ` +
+          'That finger is your limit. Metronome work in the training zone helps it catch up.',
+      });
+    }
+
+    if (max.quarterBpm && max.fade > 0.15) {
+      issues.push({
+        level: 'info',
+        title: `Max speed faded ${pct(max.fade)}%`,
+        detail: 'Normal for an all-out effort. The training zone is based on your average, not your opening burst.',
+      });
+    }
+
+    const level = worstLevel(issues);
+    if (level === 'good') {
+      issues.unshift({
+        level: 'good',
+        title: 'Good calibration',
+        detail: 'Relaxed and max both look clean. The zones below fit you well.',
+      });
+    }
+
+    // Training zone: 80–90% of max, never below your relaxed pace.
+    const zoneLow = round5(Math.max(relaxedBpm, maxBpm * 0.8));
+    const zoneHigh = Math.max(zoneLow, round5(maxBpm * 0.9));
+    const recommendBpm = round5(clamp((relaxedBpm + maxBpm) / 2, zoneLow, zoneHigh));
+
+    return {
+      ok: true,
+      mode: 'calibration',
+      relaxed,
+      max,
+      relaxedBpm,
+      maxBpm,
+      peakBpm: max.peakBpm,
+      ratio,
+      zone: { warmup: round5(relaxedBpm * 0.9), low: zoneLow, high: zoneHigh },
+      recommendBpm,
+      issues,
+      level,
+      durationMs: relaxed.durationMs + max.durationMs,
+      n: relaxed.n + max.n,
+    };
+  }
+
   // ------------------------------------------------------------ rest logic
 
   /** Rest after a set: roughly 2× the work, at least 30 s, at most 3 min. */
@@ -636,6 +762,7 @@
     analyzePress,
     analyzeFree,
     analyzeMetronome,
+    analyzeCalibration,
     createLiveMonitor,
     recommendedRestSec,
     onTimeWindow,

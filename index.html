@@ -25,11 +25,19 @@
       <details id="settings" class="card" open>
         <summary>Set-up</summary>
         <div class="settings-grid">
-          <fieldset class="seg" aria-label="Mode">
+          <fieldset class="seg seg-modes" aria-label="Mode">
             <legend>Mode</legend>
             <label><input type="radio" name="mode" value="free" checked><span>Speed test</span></label>
             <label><input type="radio" name="mode" value="metronome"><span>Metronome</span></label>
+            <label><input type="radio" name="mode" value="calibrate"><span>Calibrate</span></label>
           </fieldset>
+
+          <div class="field only-calib calib-info">
+            <span class="label">How calibration works</span>
+            <span class="hint"><b>Step 1:</b> 15 seconds at a relaxed pace you could keep up for a minute. <b>Break:</b> 15 seconds.
+              <b>Step 2:</b> 10 seconds as fast as you can. You get a training zone and a starting BPM for the metronome.</span>
+            <span class="hint" id="calib-summary"></span>
+          </div>
 
           <fieldset class="seg" aria-label="Technique">
             <legend>Technique</legend>
@@ -93,7 +101,7 @@
           </label>
 
           <label class="check only-metro"><input id="metro-ticks" type="checkbox"> Click on every note, not just every beat</label>
-          <label class="check"><input id="autostop" type="checkbox" checked> Stop the set automatically when my form breaks down</label>
+          <label class="check not-calib"><input id="autostop" type="checkbox" checked> Stop the set automatically when my form breaks down</label>
         </div>
       </details>
 
@@ -130,6 +138,11 @@
       <div class="card">
         <h2>Today</h2>
         <div class="tiles" id="today-tiles"></div>
+      </div>
+      <div class="card">
+        <h2>Calibrations</h2>
+        <p class="sub">Relaxed vs max speed. A shrinking gap means your speed is coming from relaxed motion, not force.</p>
+        <div class="chart" id="hist-calib"></div>
       </div>
       <div class="card">
         <h2>Speed tests</h2>
@@ -174,9 +187,10 @@
       <div class="card">
         <h2>A sensible session</h2>
         <ol>
+          <li><b>Calibrate</b> on your first session and about once a week after. It sets your training zone.</li>
           <li><b>Warm up</b> for 2–3 minutes at an easy metronome speed.</li>
           <li><b>One speed test</b> to see where you are today. Don't max-test every set.</li>
-          <li><b>Metronome sets</b> at about 90% of your speed-test result. Move up 5 BPM only when the app says the set was clean.</li>
+          <li><b>Metronome sets</b> inside your training zone (about 80–90% of max). Move up 5 BPM only when the app says the set was clean.</li>
           <li><b>Rest</b> roughly twice as long as each set. The app counts it down for you.</li>
           <li><b>Stop for the day</b> when quality drops two sets in a row. Tired reps teach tense habits.</li>
         </ol>

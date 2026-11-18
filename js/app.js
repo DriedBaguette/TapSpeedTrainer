@@ -34,6 +34,8 @@
     listeningSlot: null,
     painConfirmUntil: 0,
     clearConfirmUntil: 0,
+    calib: null, // { stage: 'relaxed' | 'max', relaxed: taps[] }
+    breakUntil: 0,
   };
 
   // ------------------------------------------------------------ utilities
@@ -58,7 +60,10 @@
     return settings.keys.map((k) => k.label);
   }
 
+  const CALIB = { relaxedMs: 15000, breakMs: 15000, maxMs: 10000 };
+
   function freeLimit() {
+    if (settings.mode === 'calibrate') return { ms: S.calib && S.calib.stage === 'max' ? CALIB.maxMs : CALIB.relaxedMs };
     const v = settings.freeLength;
     return v[0] === 'n' ? { taps: +v.slice(1) } : { ms: +v.slice(1) * 1000 };
   }
@@ -92,7 +97,13 @@
     $$('.pad').forEach((p) => (p.querySelector('.pad-key').textContent = settings.keys[+p.dataset.pad].label));
     $('#pads').classList.toggle('single', settings.style === 'single');
     document.body.classList.toggle('mode-metronome', settings.mode === 'metronome');
+    document.body.classList.toggle('mode-calibrate', settings.mode === 'calibrate');
     $('#live-extra-label').textContent = settings.mode === 'metronome' ? 'on time' : 'variation';
+    if (!isActive()) $('#live-time').textContent = settings.mode !== 'metronome' && freeLimit().ms ? (freeLimit().ms / 1000).toFixed(1) : '0.0';
+    const c = settings.calibration;
+    $('#calib-summary').textContent = c
+      ? `Last calibration (${new Date(c.time).toLocaleDateString()}): relaxed ${Math.round(c.relaxedBpm)}, max ${Math.round(c.maxBpm)}, training zone ${c.zoneLow}–${c.zoneHigh} BPM.`
+      : 'You haven’t calibrated yet.';
   }
 
   $$('input[name="mode"]').forEach((r) => r.addEventListener('change', () => save({ mode: r.value })));
@@ -199,7 +210,7 @@
   }
 
   function isActive() {
-    return S.phase === 'armed' || S.phase === 'running' || S.phase === 'starting';
+    return S.phase === 'armed' || S.phase === 'running' || S.phase === 'starting' || S.phase === 'break';
   }
 
   function press(pad, t, id) {
@@ -211,7 +222,9 @@
     if (S.phase === 'armed') {
       S.phase = 'running';
       S.startT = t;
-      setStatus('Go! Keep it even.');
+      setStatus(
+        !S.calib ? 'Go! Keep it even.' : S.calib.stage === 'relaxed' ? 'Nice and easy. Stay loose.' : 'Go! As fast as you can!',
+      );
     }
     if (S.phase !== 'running') {
       if (S.phase === 'idle' || S.phase === 'done') setStatus('Press Start when you’re ready.');
@@ -228,7 +241,7 @@
 
     const lim = freeLimit();
     if (!S.grid && lim.taps && S.taps.length >= lim.taps) finish('done');
-    else if (snap.breakdown && settings.autostop) finish('breakdown');
+    else if (snap.breakdown && settings.autostop && !S.calib) finish('breakdown');
   }
 
   function release(id, t) {
@@ -258,7 +271,7 @@
   function resetLive() {
     $('#live-bpm').textContent = '–';
     $('#live-taps').textContent = '0';
-    $('#live-time').textContent = settings.mode === 'free' && freeLimit().ms ? (freeLimit().ms / 1000).toFixed(1) : '0.0';
+    $('#live-time').textContent = settings.mode !== 'metronome' && freeLimit().ms ? (freeLimit().ms / 1000).toFixed(1) : '0.0';
     $('#live-extra').textContent = '–';
     showAlert($('#live-alert'), null);
     $('#err-dot').style.left = '50%';
@@ -303,6 +316,7 @@
     S.taps = [];
     S.grid = null;
     S.lastSnap = null;
+    S.calib = settings.mode === 'calibrate' ? { stage: 'relaxed', relaxed: null } : null;
     resetLive();
     $('#report').hidden = true;
     settingsEl.open = false;
@@ -311,7 +325,11 @@
     $('#stop').hidden = false;
     $('#err-meter').hidden = settings.mode !== 'metronome';
 
-    if (settings.mode === 'free') {
+    if (settings.mode === 'calibrate') {
+      S.phase = 'armed';
+      S.monitor = A.createLiveMonitor();
+      setStatus('Step 1 of 2: tap at a relaxed pace you could keep up for a minute. 15 seconds, starting on your first tap.');
+    } else if (settings.mode === 'free') {
       S.phase = 'armed';
       S.monitor = A.createLiveMonitor();
       setStatus('Ready. The timer starts on your first tap.');
@@ -335,6 +353,19 @@
 
   function tick() {
     const now = performance.now();
+    if (S.phase === 'break') {
+      const left = S.breakUntil - now;
+      $('#live-time').textContent = (Math.max(0, left) / 1000).toFixed(1);
+      if (left <= 0) {
+        S.phase = 'armed';
+        S.taps = [];
+        S.monitor = A.createLiveMonitor();
+        resetLive();
+        setStatus('Step 2 of 2: as fast as you can for 10 seconds! Starts on your first tap.');
+      } else {
+        setStatus(`Break: shake out your hands. Step 2 (all-out speed) unlocks in ${Math.ceil(left / 1000)} s.`);
+      }
+    }
     if (S.phase === 'running') {
       if (!S.grid) {
         const lim = freeLimit();
@@ -460,10 +491,12 @@
     idle: 'Set ended: you stopped tapping.',
     manual: 'Set stopped.',
     breakdown: 'Set stopped automatically because your form broke down.',
+    calibrated: 'Calibration complete.',
   };
 
   function finish(reason) {
     if (!isActive()) return;
+    if (S.calib) return finishCalibration(reason);
     const wasArmed = S.phase === 'armed' || S.phase === 'starting';
     const stopT = performance.now();
     S.phase = 'done';
@@ -503,6 +536,16 @@
         detail: `${S.lastSnap && S.lastSnap.alert ? S.lastSnap.alert.text + ' ' : ''}Rest, then go again a little slower.`,
       });
       res.level = 'stop';
+    }
+    const cal = settings.calibration;
+    if (cal && res.mode === 'metronome' && res.targetBpm > cal.zoneHigh) {
+      res.issues.push({
+        level: 'info',
+        title: 'Above your training zone',
+        detail:
+          `Your calibrated zone is ${cal.zoneLow}–${cal.zoneHigh} BPM. Above it, form usually breaks down, ` +
+          'so keep sets here short and occasional, or recalibrate if you’ve got faster.',
+      });
     }
     if (S.earlyStart) {
       res.issues.push({
@@ -548,6 +591,82 @@
     updateDayBanner();
   }
 
+  function cancelCalibration(msg) {
+    S.phase = 'done';
+    S.calib = null;
+    endUI();
+    setStatus(msg);
+  }
+
+  function finishCalibration(reason) {
+    const stage = S.calib.stage;
+    const running = S.phase === 'running';
+    if (!running || reason !== 'time') {
+      if (reason === 'idle') {
+        return cancelCalibration(`Calibration cancelled: you stopped tapping. Keep going for the full ${stage === 'relaxed' ? 15 : 10} seconds.`);
+      }
+      return cancelCalibration('Calibration cancelled.');
+    }
+    const taps = S.taps.filter((t) => t.t <= S.startT + freeLimit().ms);
+
+    if (stage === 'relaxed') {
+      if (taps.length < 10) return cancelCalibration('Calibration cancelled: not enough taps in step 1.');
+      S.calib.relaxed = taps;
+      S.calib.stage = 'max';
+      S.phase = 'break';
+      S.breakUntil = performance.now() + CALIB.breakMs;
+      showAlert($('#live-alert'), null);
+      S.raf = requestAnimationFrame(tick);
+      return;
+    }
+
+    S.phase = 'done';
+    endUI();
+    const opts = { alternate: settings.style === 'alternate', keyNames: keyNames() };
+    const res = A.analyzeCalibration(S.calib.relaxed, taps, opts);
+    S.calib = null;
+    if (!res.ok) return setStatus(res.reason);
+
+    const record = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      time: Date.now(),
+      mode: 'calibration',
+      style: settings.style,
+      n: res.n,
+      durationMs: Math.round(res.durationMs),
+      reason,
+      level: res.level,
+      issues: res.issues.filter((i) => i.level !== 'good').map((i) => i.title),
+      feel: null,
+      relaxedBpm: +res.relaxedBpm.toFixed(1),
+      maxBpm: +res.maxBpm.toFixed(1),
+      peakBpm: +res.peakBpm.toFixed(1),
+      relaxedCv: +res.relaxed.consistency.toFixed(4),
+      maxCv: +res.max.consistency.toFixed(4),
+      zoneLow: res.zone.low,
+      zoneHigh: res.zone.high,
+      recommendBpm: res.recommendBpm,
+    };
+    Store.addSet(record);
+    save({
+      calibration: {
+        time: record.time,
+        relaxedBpm: record.relaxedBpm,
+        maxBpm: record.maxBpm,
+        relaxedCv: record.relaxedCv,
+        zoneLow: record.zoneLow,
+        zoneHigh: record.zoneHigh,
+        recommendBpm: record.recommendBpm,
+      },
+    });
+
+    const restSec = A.recommendedRestSec(res.max.durationMs, res.level);
+    S.restUntil = Date.now() + restSec * 1000;
+    setStatus('Calibration complete.');
+    renderReport(res, record, 'calibrated', restSec);
+    updateDayBanner();
+  }
+
   // --------------------------------------------------------------- report
 
   function tile(value, label) {
@@ -567,16 +686,35 @@
   function renderReport(res, record, reason, restSec) {
     const el = $('#report');
     const names = keyNames();
-    let html = `<h2>Set report</h2><p class="sub">${esc(REASONS[reason])} Rest about ${fmtClock(restSec)} before the next set.</p>`;
+    let html = `<h2>${res.mode === 'calibration' ? 'Calibration' : 'Set report'}</h2><p class="sub">${esc(REASONS[reason])} Rest about ${fmtClock(restSec)} before the next set.</p>`;
+    const cal = settings.calibration;
 
-    if (res.mode === 'free') {
+    if (res.mode === 'calibration') {
+      html +=
+        '<div class="tiles">' +
+        tile(Math.round(res.relaxedBpm), 'relaxed BPM') +
+        tile(Math.round(res.maxBpm), 'max BPM (average)') +
+        tile(Math.round(res.peakBpm), 'max peak (16 taps)') +
+        tile(`${Math.round(res.ratio * 100)}%`, 'relaxed as % of max') +
+        tile(`${Math.round(res.relaxed.consistency * 100)}% / ${Math.round(res.max.consistency * 100)}%`, 'variation relaxed / max') +
+        '</div>';
+      html += `<ul class="zones">
+        <li><span class="z-name">Warm-up</span><span class="z-bpm">≤ ${res.zone.warmup} BPM</span><span class="z-note">Easy, loose, any time.</span></li>
+        <li><span class="z-name">Training zone</span><span class="z-bpm">${res.zone.low}–${res.zone.high} BPM</span><span class="z-note">Metronome work. Move up only when sets come back clean.</span></li>
+        <li><span class="z-name">Max</span><span class="z-bpm">${res.zone.high + 1}+ BPM</span><span class="z-note">Test it now and then. Don’t practise here.</span></li>
+      </ul>`;
+      html += issueList(res.issues);
+      html += `<p class="recommend">Start metronome work at <b>${res.recommendBpm} BPM</b>.
+        <button type="button" class="secondary" id="practise-at">Practise at ${res.recommendBpm}</button></p>`;
+      html += '<div class="chart"><h3>Relaxed vs max</h3><p class="sub">Rolling speed over 8 taps in each step. Shaded = your training zone.</p><div id="rep-a"></div></div>';
+    } else if (res.mode === 'free') {
       html +=
         '<div class="tiles">' +
         tile(Math.round(res.avgBpm), 'average BPM') +
         tile(Math.round(res.peakBpm), 'peak BPM (16 taps)') +
         tile(res.tapsPerSec.toFixed(1), 'taps / second') +
         tile(`${Math.round(res.consistency * 100)}%`, 'spacing variation') +
-        tile(res.n, 'taps') +
+        (cal ? tile(`${Math.round((res.avgBpm / cal.maxBpm) * 100)}%`, 'of calibrated max') : tile(res.n, 'taps')) +
         '</div>';
       html += issueList(res.issues);
       html += `<p class="recommend">Controlled practice speed: about <b>${res.recommendBpm} BPM</b> on the metronome.
@@ -629,7 +767,17 @@
         : [{ name: 'Taps', color: '--series-1', type: 'dots', points: pts }];
     const secFmt = (v) => `${+v.toFixed(1)}s`;
 
-    if (res.mode === 'free') {
+    if (res.mode === 'calibration') {
+      Charts.render($('#rep-a'), {
+        series: [
+          { name: 'Relaxed', color: '--series-1', type: 'line', points: res.relaxed.series.speed },
+          { name: 'Max', color: '--series-2', type: 'line', points: res.max.series.speed },
+        ],
+        xFmt: secFmt,
+        yFmt: (v) => `${Math.round(v)}`,
+        band: { y0: res.zone.low, y1: res.zone.high },
+      });
+    } else if (res.mode === 'free') {
       Charts.render($('#rep-a'), {
         series: [{ name: 'Speed', color: '--series-1', type: 'line', points: res.series.speed }],
         xFmt: secFmt,
@@ -667,12 +815,12 @@
         practise.textContent = 'Done. Metronome mode set';
         practise.disabled = true;
       });
-    const cal = $('#calibrate');
-    if (cal)
-      cal.addEventListener('click', () => {
+    const offsetBtn = $('#calibrate');
+    if (offsetBtn)
+      offsetBtn.addEventListener('click', () => {
         save({ metroOffset: settings.metroOffset + Math.round(res.meanErr) });
-        cal.textContent = `Offset set to ${settings.metroOffset} ms`;
-        cal.disabled = true;
+        offsetBtn.textContent = `Offset set to ${settings.metroOffset} ms`;
+        offsetBtn.disabled = true;
       });
 
     const FEEL = {
@@ -765,9 +913,19 @@
 
     const date = (s) => new Date(s.time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     const free = sets.filter((s) => s.mode === 'free');
+    const calibs = sets.filter((s) => s.mode === 'calibration');
     const metro = sets.filter((s) => s.mode === 'metronome');
     const intFmt = (v) => (Number.isInteger(v) ? String(v) : '');
 
+    Charts.render($('#hist-calib'), {
+      series: [
+        { name: 'Relaxed', color: '--series-1', type: 'line', points: calibs.map((s, i) => ({ x: i + 1, y: s.relaxedBpm, tip: `Calibration ${i + 1} · ${date(s)}` })) },
+        { name: 'Max', color: '--series-2', type: 'line', points: calibs.map((s, i) => ({ x: i + 1, y: s.maxBpm, tip: `Calibration ${i + 1} · ${date(s)}` })) },
+      ],
+      xFmt: intFmt,
+      yFmt: (v) => `${Math.round(v)}`,
+      empty: 'Run a calibration to start tracking.',
+    });
     Charts.render($('#hist-speed'), {
       series: [
         { name: 'Average', color: '--series-1', type: 'line', points: free.map((s, i) => ({ x: i + 1, y: s.avgBpm, tip: `Set ${i + 1} · ${date(s)}` })) },
@@ -815,9 +973,11 @@
               const result =
                 s.mode === 'free'
                   ? `${Math.round(s.avgBpm)} avg · ${Math.round(s.peakBpm)} peak · ${Math.round(s.consistency * 100)}% var.`
-                  : `${s.targetBpm} BPM · ${Math.round(s.onTimePct * 100)}% on time · UR ${Math.round(s.unstableRate)}`;
+                  : s.mode === 'calibration'
+                    ? `relaxed ${Math.round(s.relaxedBpm)} · max ${Math.round(s.maxBpm)} · zone ${s.zoneLow}–${s.zoneHigh}`
+                    : `${s.targetBpm} BPM · ${Math.round(s.onTimePct * 100)}% on time · UR ${Math.round(s.unstableRate)}`;
               const form = s.issues && s.issues.length ? s.issues.join('; ') : 'clean';
-              return `<tr><td>${esc(date(s))}</td><td>${s.mode === 'free' ? 'Speed test' : 'Metronome'}</td><td>${esc(result)}</td>` +
+              return `<tr><td>${esc(date(s))}</td><td>${{ free: 'Speed test', metronome: 'Metronome', calibration: 'Calibration' }[s.mode] || s.mode}</td><td>${esc(result)}</td>` +
                 `<td>${ICON[s.level] || ''} ${esc(form)}</td><td>${esc(FEEL_LABEL[s.feel] || '–')}</td></tr>`;
             })
             .join('')
