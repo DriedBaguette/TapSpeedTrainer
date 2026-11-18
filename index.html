@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a1a19">
+  <title>Tap Speed Trainer</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Tap Speed Trainer</h1>
+    <nav class="tabs" role="tablist">
+      <button role="tab" class="tab" data-view="train" aria-selected="true">Train</button>
+      <button role="tab" class="tab" data-view="history" aria-selected="false">History</button>
+      <button role="tab" class="tab" data-view="guide" aria-selected="false">How to train</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============================================================ TRAIN -->
+    <section id="view-train" class="view" role="tabpanel">
+      <div id="day-banner" class="banner" hidden></div>
+
+      <details id="settings" class="card" open>
+        <summary>Set-up</summary>
+        <div class="settings-grid">
+          <fieldset class="seg" aria-label="Mode">
+            <legend>Mode</legend>
+            <label><input type="radio" name="mode" value="free" checked><span>Speed test</span></label>
+            <label><input type="radio" name="mode" value="metronome"><span>Metronome</span></label>
+          </fieldset>
+
+          <fieldset class="seg" aria-label="Technique">
+            <legend>Technique</legend>
+            <label><input type="radio" name="style" value="alternate" checked><span>Two fingers, alternating</span></label>
+            <label><input type="radio" name="style" value="single"><span>One finger</span></label>
+          </fieldset>
+
+          <div class="field">
+            <span class="label">Keys</span>
+            <div class="keys">
+              <button type="button" class="keybind" data-slot="0">Z</button>
+              <button type="button" class="keybind" data-slot="1">X</button>
+            </div>
+            <span class="hint">Click a key, then press the key you want. Mouse and touch work on the pads too.</span>
+          </div>
+
+          <label class="field only-free">
+            <span class="label">Set length</span>
+            <select id="free-length">
+              <option value="t10">10 seconds</option>
+              <option value="t20" selected>20 seconds</option>
+              <option value="t30">30 seconds</option>
+              <option value="t60">60 seconds</option>
+              <option value="n100">100 taps</option>
+              <option value="n200">200 taps</option>
+            </select>
+          </label>
+
+          <label class="field only-metro">
+            <span class="label">Target BPM</span>
+            <span class="stepper">
+              <button type="button" data-step="-5" aria-label="Lower BPM by 5">−</button>
+              <input id="metro-bpm" type="number" min="40" max="400" step="1" value="150" inputmode="numeric">
+              <button type="button" data-step="5" aria-label="Raise BPM by 5">+</button>
+            </span>
+          </label>
+
+          <label class="field only-metro">
+            <span class="label">Taps per beat</span>
+            <select id="metro-subdiv">
+              <option value="4" selected>4 (1/4 notes, streams)</option>
+              <option value="2">2 (1/2 notes)</option>
+              <option value="1">1 (on the beat)</option>
+            </select>
+          </label>
+
+          <label class="field only-metro">
+            <span class="label">Set length</span>
+            <select id="metro-length">
+              <option value="10">10 seconds</option>
+              <option value="20" selected>20 seconds</option>
+              <option value="30">30 seconds</option>
+              <option value="60">60 seconds</option>
+            </select>
+          </label>
+
+          <label class="field only-metro">
+            <span class="label">Audio offset (ms)</span>
+            <input id="metro-offset" type="number" step="1" value="0" inputmode="numeric">
+            <span class="hint">Compensates for headphone/speaker delay. Use the calibrate button after a set.</span>
+          </label>
+
+          <label class="check only-metro"><input id="metro-ticks" type="checkbox"> Click on every note, not just every beat</label>
+          <label class="check"><input id="autostop" type="checkbox" checked> Stop the set automatically when my form breaks down</label>
+        </div>
+      </details>
+
+      <div class="card live" aria-live="polite">
+        <div class="live-stats">
+          <div class="stat big"><span class="value" id="live-bpm">–</span><span class="unit">BPM</span></div>
+          <div class="stat"><span class="value" id="live-taps">0</span><span class="unit">taps</span></div>
+          <div class="stat"><span class="value" id="live-time">0.0</span><span class="unit">sec</span></div>
+          <div class="stat"><span class="value" id="live-extra">–</span><span class="unit" id="live-extra-label">evenness</span></div>
+        </div>
+        <div class="meter" id="err-meter" hidden aria-hidden="true">
+          <span class="meter-label">early</span>
+          <div class="meter-track"><div class="meter-zone"></div><div class="meter-center"></div><div class="meter-dot" id="err-dot"></div></div>
+          <span class="meter-label">late</span>
+        </div>
+        <div id="live-alert" class="alert" hidden></div>
+        <div id="status-line" class="status-line">Press Start, then tap.</div>
+        <div class="pads" id="pads">
+          <button type="button" class="pad" data-pad="0"><span class="pad-key">Z</span></button>
+          <button type="button" class="pad" data-pad="1"><span class="pad-key">X</span></button>
+          <div class="beat" id="beat" aria-hidden="true"></div>
+        </div>
+        <div class="actions">
+          <button type="button" id="start" class="primary">Start</button>
+          <button type="button" id="stop" class="secondary" hidden>Stop</button>
+        </div>
+      </div>
+
+      <div id="report" class="card report" hidden></div>
+    </section>
+
+    <!-- ========================================================== HISTORY -->
+    <section id="view-history" class="view" role="tabpanel" hidden>
+      <div class="card">
+        <h2>Today</h2>
+        <div class="tiles" id="today-tiles"></div>
+      </div>
+      <div class="card">
+        <h2>Speed tests</h2>
+        <p class="sub">Average speed per set. Peak is the fastest 16 taps.</p>
+        <div class="chart" id="hist-speed"></div>
+      </div>
+      <div class="card">
+        <h2>Rhythm evenness</h2>
+        <p class="sub">Variation in tap spacing (%). Lower is better; under 10% is solid.</p>
+        <div class="chart" id="hist-cv"></div>
+      </div>
+      <div class="card">
+        <h2>Metronome sets</h2>
+        <p class="sub">Share of taps on the click at each target BPM.</p>
+        <div class="chart" id="hist-metro"></div>
+      </div>
+      <div class="card">
+        <h2>All sets</h2>
+        <div class="table-wrap"><table id="hist-table"></table></div>
+        <div class="actions">
+          <button type="button" id="export" class="secondary">Export data</button>
+          <label class="secondary file-btn">Import data<input type="file" id="import" accept="application/json" hidden></label>
+          <button type="button" id="clear" class="danger">Clear history</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ GUIDE -->
+    <section id="view-guide" class="view prose" role="tabpanel" hidden>
+      <div class="card">
+        <h2>What this app watches for</h2>
+        <ul>
+          <li><b>Speed fade.</b> If you finish much slower than you started, you were tensing up or started too fast.</li>
+          <li><b>Uneven rhythm.</b> Big variation between taps means mashing. Clean, even taps are what transfer to real play.</li>
+          <li><b>Galloping.</b> With two fingers, one finger landing late makes taps pair up (da-dum, da-dum). The app tells you which one.</li>
+          <li><b>Doubled taps.</b> Hitting the same key twice while alternating means a finger is missing or you're flailing.</li>
+          <li><b>Pressing harder.</b> If you hold keys down longer as the set goes on, your hand is tightening.</li>
+          <li><b>Form collapse during a set.</b> With auto-stop on, the set ends as soon as speed or rhythm falls apart, so you don't rehearse bad reps.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>A sensible session</h2>
+        <ol>
+          <li><b>Warm up</b> for 2–3 minutes at an easy metronome speed.</li>
+          <li><b>One speed test</b> to see where you are today. Don't max-test every set.</li>
+          <li><b>Metronome sets</b> at about 90% of your speed-test result. Move up 5 BPM only when the app says the set was clean.</li>
+          <li><b>Rest</b> roughly twice as long as each set. The app counts it down for you.</li>
+          <li><b>Stop for the day</b> when quality drops two sets in a row. Tired reps teach tense habits.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h2>Technique cues</h2>
+        <ul>
+          <li>Keep your wrist and forearm loose. Speed comes from relaxation, not force.</li>
+          <li>Press only as hard as the key needs. Long, heavy presses slow you down.</li>
+          <li>Short, frequent sessions beat one long grind.</li>
+        </ul>
+      </div>
+      <div class="card warn-card">
+        <h2>If it hurts, stop</h2>
+        <p>Burning, aching, numbness or tingling in your hand, wrist or forearm means stop for the day. Pain that lasts or comes back is worth seeing a doctor or physio about. Pushing through it is how repetitive strain injuries start. The app asks after every set, and if you report pain it tells you to rest for the day.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/analysis.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

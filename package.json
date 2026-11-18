@@ -1,0 +1,9 @@
+{
+  "name": "tap-speed-trainer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser app for training tap speed with form monitoring",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}
