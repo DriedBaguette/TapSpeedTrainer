@@ -30,7 +30,8 @@
     const lo2 = Math.floor(lo / step) * step;
     const hi2 = Math.ceil(hi / step) * step;
     const out = [];
-    for (let v = lo2; v <= hi2 + step * 1e-9; v += step) out.push(+v.toFixed(10));
+    // Iteration cap: with odd data (huge values, tiny range) `v += step` can stop changing v.
+    for (let v = lo2, n = 0; v <= hi2 + step * 1e-9 && n < 50; v += step, n++) out.push(+v.toFixed(10));
     return { ticks: out, lo: lo2, hi: hi2 };
   }
 

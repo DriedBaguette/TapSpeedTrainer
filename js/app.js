@@ -22,7 +22,7 @@
   const CALIB = { relaxedMs: 15000, breakMs: 15000, maxMs: 10000 };
   // Bump on every release, together with the ?v= on the CSS/JS links in index.html (a test checks they match),
   // so phones fetch the new files instead of a cached copy.
-  const APP_VERSION = '5';
+  const APP_VERSION = '6';
   const SESSION_VERSION = 2;
   const SKIP_CALIBRATION_DAYS = 7; // a calibration this recent can be reused instead of redone
 
@@ -605,11 +605,17 @@
       S.phase = 'running';
     }
     cancelAnimationFrame(S.raf);
+    S.lastTick = 0;
     S.raf = requestAnimationFrame(tick);
   }
 
   function tick() {
     const now = performance.now();
+    // If the phone held the page up for over a second (app switch, notification, low memory), the set's
+    // timing is gone: end it cleanly instead of carrying on frozen or marking everything missed.
+    const gap = S.lastTick ? now - S.lastTick : 0;
+    S.lastTick = now;
+    if (gap > 1000 && S.phase === 'running') return finish('stalled');
     if (S.phase === 'break') {
       const left = S.breakUntil - now;
       setText($('#live-time'), (Math.max(0, left) / 1000).toFixed(1));
@@ -659,19 +665,46 @@
 
   // ------------------------------------------------------------ metronome
 
-  function click(time, kind) {
-    const ctx = S.audio.ctx;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.frequency.value = { accent: 1760, count: 1320, beat: 1100, tick: 700 }[kind];
-    const vol = kind === 'tick' ? 0.25 : 0.8;
-    g.gain.setValueAtTime(0, time);
-    g.gain.linearRampToValueAtTime(vol, time + 0.001);
-    g.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
-    o.connect(g);
-    g.connect(S.audio.out);
-    o.start(time);
-    o.stop(time + 0.05);
+  // Click sounds are rendered once into short buffers and replayed. Clicks are queued only ~0.25 s
+  // ahead by a small timer, so just a handful of audio nodes exist at any moment. (Building every click
+  // of a set up front, each with its own volume envelope, overloaded Safari's audio thread on iPhone
+  // and made the notes and clicks lag, then freeze.)
+  const CLICK_SOUND = { accent: [1760, 0.8], count: [1320, 0.8], beat: [1100, 0.8], tick: [700, 0.25] };
+  const LOOKAHEAD_MS = 250;
+
+  function clickBuffer(kind) {
+    const a = S.audio;
+    if (!a.buffers) a.buffers = {};
+    if (!a.buffers[kind]) {
+      const [freq, vol] = CLICK_SOUND[kind];
+      const rate = a.ctx.sampleRate;
+      const len = Math.round(rate * 0.05);
+      const buf = a.ctx.createBuffer(1, len, rate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        const t = i / rate;
+        const env = t < 0.001 ? t / 0.001 : Math.pow(0.001, (t - 0.001) / 0.039); // 1 ms attack, ~40 ms decay
+        d[i] = Math.sin(2 * Math.PI * freq * t) * vol * env;
+      }
+      a.buffers[kind] = buf;
+    }
+    return a.buffers[kind];
+  }
+
+  /** Queue the clicks due within the look-ahead window. Runs every 25 ms while a set plays. */
+  function scheduleClicks() {
+    const q = S.clicks;
+    if (!q || !S.audio || !S.audio.out) return;
+    const now = performance.now();
+    while (q.next < q.items.length && q.items[q.next].perf <= now + LOOKAHEAD_MS) {
+      const item = q.items[q.next++];
+      if (item.perf < now - 20) continue; // the page was held up: skip a late click rather than play a burst
+      const src = S.audio.ctx.createBufferSource();
+      src.buffer = clickBuffer(item.kind);
+      src.connect(S.audio.out);
+      src.onended = () => src.disconnect();
+      src.start(Math.max(S.audio.ctx.currentTime, q.toCtx(item.perf)));
+    }
   }
 
   async function startMetronome({ bpm, sub, lengthSec }) {
@@ -683,7 +716,13 @@
     } catch (e) {
       /* not supported */
     }
-    if (!S.audio) S.audio = { ctx: new AC({ latencyHint: 'interactive' }), out: null };
+    if (!S.audio) {
+      S.audio = { ctx: new AC({ latencyHint: 'interactive' }), out: null };
+      // If iOS interrupts the audio mid-set (a call, another app, Siri), end the set cleanly.
+      S.audio.ctx.addEventListener('statechange', () => {
+        if (S.audio.ctx.state !== 'running' && S.phase === 'running' && S.grid) finish('audio');
+      });
+    }
     const ctx = S.audio.ctx;
     if (ctx.state !== 'running') {
       // Also wakes audio the browser paused in the background. An iPhone can leave audio "interrupted"
@@ -716,12 +755,16 @@
     const firstBeat = perfNow + Math.max(150, latencyMs + 80);
     const firstNote = firstBeat + countIn * beatMs;
 
-    for (let b = 0; b < countIn; b++) click(toCtx(firstBeat + b * beatMs), 'count');
+    const items = [];
+    for (let b = 0; b < countIn; b++) items.push({ perf: firstBeat + b * beatMs, kind: 'count' });
     for (let i = 0; i < count; i++) {
-      const t = toCtx(firstNote + i * periodMs);
-      if (i % sub === 0) click(t, i % (sub * 4) === 0 ? 'accent' : 'beat');
-      else if (settings.metroTicks) click(t, 'tick');
+      const perf = firstNote + i * periodMs;
+      if (i % sub === 0) items.push({ perf, kind: i % (sub * 4) === 0 ? 'accent' : 'beat' });
+      else if (settings.metroTicks) items.push({ perf, kind: 'tick' });
     }
+    S.clicks = { items, next: 0, toCtx };
+    scheduleClicks();
+    S.clickTimer = setInterval(scheduleClicks, 25);
 
     // The audio offset setting shifts when taps are expected (headphone/speaker delay the browser can't see).
     const off = settings.metroOffset;
@@ -749,6 +792,8 @@
   });
 
   function stopAudio() {
+    clearInterval(S.clickTimer);
+    S.clicks = null;
     if (S.audio && S.audio.out) {
       S.audio.out.disconnect();
       S.audio.out = null;
@@ -766,6 +811,12 @@
     $('#stop').hidden = true;
     showAlert($('#live-alert'), null);
   }
+
+  const INTERRUPTED = {
+    stalled: 'The phone paused the app mid-set.',
+    hidden: 'The app went into the background mid-set.',
+    audio: 'The phone interrupted the audio mid-set.',
+  };
 
   const REASONS = {
     time: 'Set complete.',
@@ -794,6 +845,15 @@
 
   function finish(reason) {
     if (!isActive()) return;
+    if (INTERRUPTED[reason]) {
+      const msg = `${INTERRUPTED[reason]} This ${S.calib ? 'calibration' : 'set'} doesn’t count. Press Start to redo it.`;
+      if (S.calib) return cancelCalibration(msg);
+      S.phase = 'done';
+      S.step = null;
+      endUI();
+      setStatus(msg);
+      return syncStepUI();
+    }
     if (S.calib) return finishCalibration(reason);
     const wasArmed = S.phase === 'armed' || S.phase === 'starting';
     const stopT = performance.now();
@@ -897,6 +957,7 @@
       S.phase = 'break';
       S.breakUntil = performance.now() + CALIB.breakMs;
       showAlert($('#live-alert'), null);
+      S.lastTick = 0;
       S.raf = requestAnimationFrame(tick);
       return;
     }
@@ -1166,6 +1227,10 @@
     }
     showAlert(el, null);
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && isActive()) finish('hidden');
+  });
 
   $('#start').addEventListener('click', startSet);
   $('#stop').addEventListener('click', () => finish('manual'));
