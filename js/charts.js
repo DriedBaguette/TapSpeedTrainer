@@ -78,7 +78,7 @@
     const W = plot.clientWidth;
     const H = cfg.height || 220;
     if (!W) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(2, window.devicePixelRatio || 1); // 3x phone screens look the same at 2x for far less drawing
     canvas.width = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
     canvas.style.width = W + 'px';

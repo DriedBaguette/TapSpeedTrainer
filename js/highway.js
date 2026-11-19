@@ -17,14 +17,47 @@
   const TEXT = { perfect: 'Perfect', great: 'Great', good: 'Good', miss: 'Miss', extra: 'Extra' };
   const FX_MS = 500;
 
-  function css(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888';
+  // This runs every animation frame, so it avoids anything that makes the browser recalculate the page:
+  // colours are read once (and again only when the theme changes), and the track's width is measured
+  // only when its container is resized, not on every frame.
+  let colors = null;
+  function readColors() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (name) => cs.getPropertyValue(name).trim() || '#888';
+    return {
+      lane: v('--surface-2'),
+      line: v('--text-muted'),
+      text: v('--text-primary'),
+      muted: v('--text-muted'),
+      surface: v('--surface'),
+      accent: v('--accent'),
+      s1: v('--series-1'),
+      s2: v('--series-2'),
+      good: v('--good-ink'),
+      warn: v('--warning-ink'),
+      bad: v('--critical-ink'),
+      info: v('--info-ink'),
+    };
+  }
+  if (root.matchMedia) {
+    root.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => (colors = null));
+  }
+
+  const widths = new WeakMap(); // canvas -> last measured width of its container
+  function trackWidth(canvas) {
+    if (!widths.has(canvas)) {
+      widths.set(canvas, canvas.parentElement.clientWidth);
+      if (root.ResizeObserver) {
+        new ResizeObserver((entries) => widths.set(canvas, Math.round(entries[0].contentRect.width))).observe(canvas.parentElement);
+      }
+    }
+    return widths.get(canvas);
   }
 
   function size(canvas, lanes) {
-    const W = canvas.parentElement.clientWidth;
+    const W = trackWidth(canvas);
     const H = lanes === 2 ? 128 : 84;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(2, window.devicePixelRatio || 1); // 3x phone screens look the same at 2x for far less drawing
     if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
       canvas.width = Math.round(W * dpr);
       canvas.height = Math.round(H * dpr);
@@ -40,20 +73,8 @@
     const lanes = st.lanes;
     const { ctx, W, H } = size(canvas, lanes);
     if (!W) return;
-    const c = {
-      lane: css('--surface-2'),
-      line: css('--text-muted'),
-      text: css('--text-primary'),
-      muted: css('--text-muted'),
-      surface: css('--surface'),
-      accent: css('--accent'),
-      s1: css('--series-1'),
-      s2: css('--series-2'),
-      good: css('--good-ink'),
-      warn: css('--warning-ink'),
-      bad: css('--critical-ink'),
-      info: css('--info-ink'),
-    };
+    if (!colors) colors = readColors();
+    const c = colors;
     ctx.clearRect(0, 0, W, H);
 
     const pad = 8;

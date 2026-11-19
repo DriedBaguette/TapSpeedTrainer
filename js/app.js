@@ -22,7 +22,7 @@
   const CALIB = { relaxedMs: 15000, breakMs: 15000, maxMs: 10000 };
   // Bump on every release, together with the ?v= on the CSS/JS links in index.html (a test checks they match),
   // so phones fetch the new files instead of a cached copy.
-  const APP_VERSION = '4';
+  const APP_VERSION = '5';
   const SESSION_VERSION = 2;
   const SKIP_CALIBRATION_DAYS = 7; // a calibration this recent can be reused instead of redone
 
@@ -350,7 +350,7 @@
     if (!isActive()) {
       const sess = activeSession();
       const len = sess && sess.steps[sess.idx].lengthSec;
-      $('#live-time').textContent = tempo ? (len || 30).toFixed(1) : (CALIB.relaxedMs / 1000).toFixed(1);
+      setText($('#live-time'), tempo ? (len || 30).toFixed(1) : (CALIB.relaxedMs / 1000).toFixed(1));
       drawTrack();
     }
   }
@@ -429,7 +429,11 @@
     p.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
-      if (p.setPointerCapture) p.setPointerCapture(e.pointerId);
+      try {
+        if (p.setPointerCapture) p.setPointerCapture(e.pointerId);
+      } catch (err) {
+        /* pointer already gone; the tap still counts */
+      }
       press(+p.dataset.pad, stamp(e), 'p:' + e.pointerId);
     });
     const up = (e) => release('p:' + e.pointerId, stamp(e));
@@ -494,11 +498,20 @@
 
   // ------------------------------------------------------------ live view
 
+  /** Write text only when it changed: rewriting identical text every frame makes the browser redo layout. */
+  function setText(el, text) {
+    text = String(text);
+    if (el.textContent !== text) el.textContent = text;
+  }
+
   function setStatus(text) {
-    $('#status-line').textContent = text;
+    setText($('#status-line'), text);
   }
 
   function showAlert(el, alert) {
+    const sig = alert ? `${alert.level}|${alert.text}` : '';
+    if (el._sig === sig) return; // unchanged: skip the DOM rewrite (this runs on every tap)
+    el._sig = sig;
     if (!alert) {
       el.hidden = true;
       return;
@@ -519,14 +532,14 @@
     // Redraw the big number at most ~6 times a second so it's readable.
     const now = performance.now();
     if (!snap.bpm || now - (S.bpmShownAt || 0) > 160) {
-      $('#live-bpm').textContent = snap.bpm ? Math.round(snap.bpm) : '–';
+      setText($('#live-bpm'), snap.bpm ? Math.round(snap.bpm) : '–');
       S.bpmShownAt = now;
     }
-    $('#live-taps').textContent = S.judge ? S.judge.combo : S.taps.length;
+    setText($('#live-taps'), S.judge ? S.judge.combo : S.taps.length);
     if (S.grid) {
-      $('#live-extra').textContent = snap.onTime != null ? `${Math.round(snap.onTime * 100)}%` : '–';
+      setText($('#live-extra'), snap.onTime != null ? `${Math.round(snap.onTime * 100)}%` : '–');
     } else {
-      $('#live-extra').textContent = snap.spread ? `${Math.round(snap.spread * 100)}%` : '–';
+      setText($('#live-extra'), snap.spread ? `${Math.round(snap.spread * 100)}%` : '–');
     }
     showAlert($('#live-alert'), snap.alert);
   }
@@ -575,7 +588,7 @@
     if (S.calib) {
       S.phase = 'armed';
       S.monitor = A.createLiveMonitor();
-      $('#live-time').textContent = (CALIB.relaxedMs / 1000).toFixed(1);
+      setText($('#live-time'), (CALIB.relaxedMs / 1000).toFixed(1));
       setStatus('Calibration, step 1 of 2: tap at a relaxed pace you could keep up for a minute. 15 seconds, starting on your first tap.');
     } else {
       S.phase = 'starting';
@@ -599,7 +612,7 @@
     const now = performance.now();
     if (S.phase === 'break') {
       const left = S.breakUntil - now;
-      $('#live-time').textContent = (Math.max(0, left) / 1000).toFixed(1);
+      setText($('#live-time'), (Math.max(0, left) / 1000).toFixed(1));
       if (left <= 0) {
         S.phase = 'armed';
         S.taps = [];
@@ -615,7 +628,7 @@
         // Calibration: timed from the first tap.
         const lim = calibLimitMs();
         const el = now - S.startT;
-        $('#live-time').textContent = (Math.max(0, lim - el) / 1000).toFixed(1);
+        setText($('#live-time'), (Math.max(0, lim - el) / 1000).toFixed(1));
         if (el >= lim) return finish('time');
         const last = S.taps[S.taps.length - 1];
         if (last && now - last.t > 1500) return finish('idle');
@@ -630,11 +643,11 @@
         } else if (now >= t0 - period / 2 && now < t0 + 100) {
           setStatus('Go!');
         }
-        $('#live-time').textContent = (Math.max(0, Math.min(end - t0, end - now)) / 1000).toFixed(1);
+        setText($('#live-time'), (Math.max(0, Math.min(end - t0, end - now)) / 1000).toFixed(1));
         const missed = S.judge.sweep(now);
         if (missed.length) {
           for (const idx of missed) S.fx.push({ at: now, idx, judgment: 'miss' });
-          $('#live-taps').textContent = S.judge.combo;
+          setText($('#live-taps'), S.judge.combo);
         }
         if (S.fx.length > 40) S.fx = S.fx.filter((f) => now - f.at < 600);
         drawTrack(now);
@@ -672,7 +685,11 @@
     }
     if (!S.audio) S.audio = { ctx: new AC({ latencyHint: 'interactive' }), out: null };
     const ctx = S.audio.ctx;
-    if (ctx.state !== 'running') await ctx.resume(); // also wakes a context paused in the background
+    if (ctx.state !== 'running') {
+      // Also wakes audio the browser paused in the background. An iPhone can leave audio "interrupted"
+      // (after a call, or another app took the audio) and never settle this, so don't wait forever.
+      await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 2000))]);
+    }
     if (ctx.state !== 'running') throw new Error('the browser kept audio paused. Tap Start again');
     // Give the output clock a moment so the audio→performance mapping is valid.
     await new Promise((r) => setTimeout(r, 60));
@@ -838,7 +855,7 @@
     S.restUntil = Date.now() + restSec * 1000;
     setStatus(REASONS[reason]);
     syncStepUI();
-    renderReport(res, record, reason, restSec);
+    showReportSoon(res, record, reason, restSec);
     updateDayBanner();
   }
 
@@ -924,7 +941,7 @@
     S.restUntil = Date.now() + restSec * 1000;
     setStatus('Calibration complete.');
     syncStepUI();
-    renderReport(res, record, 'calibrated', restSec);
+    showReportSoon(res, record, 'calibrated', restSec);
     updateDayBanner();
   }
 
@@ -962,6 +979,11 @@
 
   function alertBox(a) {
     return `<div class="alert lvl-${a.level}"><span class="icon" aria-hidden="true">${ICON[a.level]}</span><span>${esc(a.text)}</span></div>`;
+  }
+
+  /** Draw the report just after the set's last frame, so finishing a set never stalls on it. */
+  function showReportSoon(res, record, reason, restSec) {
+    requestAnimationFrame(() => setTimeout(() => renderReport(res, record, reason, restSec), 0));
   }
 
   function renderReport(res, record, reason, restSec) {
